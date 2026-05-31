@@ -132,6 +132,44 @@ npm run dev
 
 ---
 
+## ☁️ Deployment
+
+यह एक **monorepo** है — backend और dashboard **अलग-अलग services** के रूप में deploy होते हैं। एक ही service में दोनों build करने की कोशिश करने पर Railway/Nixpacks fail होता है।
+
+### Backend (FastAPI) → Railway
+Root में `Dockerfile` + `railway.json` हैं, इसलिए Railway अपने-आप सही build करेगा।
+
+1. Railway → **New Project → Deploy from GitHub** → `Aitotech-agents` चुनें।
+2. Service की **Settings → Root Directory = `/`** (default) रखें।
+3. **Variables** में ये env डालें:
+   ```
+   SUPABASE_URL=...
+   SUPABASE_KEY=...
+   GROQ_API_KEY=...
+   GROQ_MODEL=llama-3.3-70b-versatile
+   WEBSITE_ALLOWED_ORIGINS=https://aitotech.com
+   ```
+   > `PORT` Railway खुद देता है — सेट न करें।
+4. Deploy। URL मिलेगा जैसे `https://aitotech-agents-production.up.railway.app`।
+
+**Orchestrator** (background worker) के लिए: उसी repo से **दूसरी service** बनाएँ और उसका
+**Start Command** बदलें:
+```
+python -m src.orchestrator
+```
+(या API service में बने `/orchestrator/tick` को cron से call करें।)
+
+### Dashboard (Next.js) → Vercel (सबसे आसान)
+1. [vercel.com](https://vercel.com) → **Import** `Aitotech-agents`।
+2. **Root Directory = `dashboard`** set करें (ज़रूरी!)।
+3. Environment variable: `NEXT_PUBLIC_API_URL = https://<अपना-railway-backend-url>`
+4. Deploy।
+
+> Dashboard को Railway पर भी चला सकते हैं: नई service बनाएँ, **Root Directory = `dashboard`** —
+> उसका `dashboard/Dockerfile` अपने-आप इस्तेमाल होगा।
+
+---
+
 ## 🛠 Tech stack
 - **Backend:** FastAPI, Uvicorn, Pydantic
 - **DB:** Supabase (Postgres)

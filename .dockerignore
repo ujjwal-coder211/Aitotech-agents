@@ -1,0 +1,22 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Frontend (अलग service में deploy होता है)
+dashboard/
+node_modules/
+
+# Git / env / docs
+.git/
+.gitignore
+.env
+.env.*
+*.md
+integrations/
+supabase/
+
+# Local build/test outputs
+pip-output.txt
+build-output.txt
