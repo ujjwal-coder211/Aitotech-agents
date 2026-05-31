@@ -1,0 +1,26 @@
+# Python 3.11+ (Python 3.14 tested). Versions लचीले रखे हैं ताकि नए Python
+# पर भी compatible wheels resolve हों।
+
+# --- Web framework / API ---
+fastapi>=0.115
+uvicorn[standard]>=0.34
+pydantic>=2.12
+pydantic-settings>=2.7
+email-validator>=2.2
+
+# --- Database (Supabase) ---
+# <2.16 इसलिए ताकि storage3 का pyiceberg (heavy, MSVC-needing) dep न आए।
+supabase>=2.11,<2.16
+
+# --- LLM / AI ---
+groq>=0.13
+langchain>=0.3
+langchain-groq>=0.2
+
+# --- Config / utils ---
+python-dotenv>=1.0
+httpx>=0.27
+tenacity>=9.0
+
+# --- Background scheduling (orchestrator loop) ---
+APScheduler>=3.11

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="hi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aitotech — AI Widget Demo</title>
+    <style>
+      body {
+        font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        background: #0b0f1a;
+        color: #e6ebf5;
+      }
+      .wrap {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 48px 20px;
+      }
+      h1 {
+        background: linear-gradient(90deg, #6d8bff, #9b6dff);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .card {
+        background: #131a2b;
+        border: 1px solid #26304a;
+        border-radius: 14px;
+        padding: 20px;
+        margin: 18px 0;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: #8b97b3;
+        margin: 10px 0 4px;
+      }
+      input,
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        background: #1a2336;
+        border: 1px solid #26304a;
+        color: #e6ebf5;
+        border-radius: 9px;
+        padding: 10px;
+        font-size: 14px;
+      }
+      button {
+        margin-top: 14px;
+        background: linear-gradient(90deg, #6d8bff, #9b6dff);
+        color: #fff;
+        border: none;
+        border-radius: 9px;
+        padding: 10px 18px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #services li {
+        margin: 6px 0;
+      }
+      .ok {
+        color: #2ecc71;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Aitotech</h1>
+      <p>यह demo दिखाता है कि आपकी website AI backend से कैसे जुड़ती है।</p>
+
+      <div class="card">
+        <h3>हमारी Services</h3>
+        <ul id="services">
+          <li>Loading…</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Contact us</h3>
+        <label>Name</label>
+        <input id="c-name" />
+        <label>Email</label>
+        <input id="c-email" type="email" />
+        <label>Message</label>
+        <textarea id="c-msg" rows="3"></textarea>
+        <button id="c-submit">Send</button>
+        <p id="c-result"></p>
+      </div>
+
+      <p style="color: #8b97b3; font-size: 13px">
+        नीचे-दाएँ 💬 button से chat widget खुलता है।
+      </p>
+    </div>
+
+    <!-- ===== Aitotech AI Widget — असली website में बस यही script चाहिए ===== -->
+    <script src="./aitotech-widget.js" data-api="http://localhost:8000" defer></script>
+
+    <!-- नीचे का code सिर्फ इस demo के services + contact form के लिए है -->
+    <script>
+      window.addEventListener("load", function () {
+        if (!window.Aitotech) return;
+
+        Aitotech.getServices()
+          .then(function (list) {
+            var ul = document.getElementById("services");
+            ul.innerHTML = "";
+            (list || []).forEach(function (s) {
+              var li = document.createElement("li");
+              li.textContent =
+                s.name + " — " + (s.description || "") + (s.price ? " (" + s.price + ")" : "");
+              ul.appendChild(li);
+            });
+            if (!ul.children.length) ul.innerHTML = "<li>कोई service नहीं मिली।</li>";
+          })
+          .catch(function () {
+            document.getElementById("services").innerHTML =
+              "<li>Backend से connect नहीं हुआ।</li>";
+          });
+
+        document.getElementById("c-submit").addEventListener("click", function () {
+          Aitotech.submitContact({
+            name: document.getElementById("c-name").value,
+            email: document.getElementById("c-email").value,
+            message: document.getElementById("c-msg").value,
+            source: "aitotech",
+          })
+            .then(function (res) {
+              document.getElementById("c-result").innerHTML =
+                '<span class="ok">' + (res.message || "भेज दिया गया!") + "</span>";
+            })
+            .catch(function () {
+              document.getElementById("c-result").textContent = "Error — दोबारा कोशिश करें।";
+            });
+        });
+      });
+    </script>
+  </body>
+</html>
