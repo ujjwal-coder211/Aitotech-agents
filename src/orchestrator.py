@@ -28,12 +28,36 @@ from .database import (
     fetch_pending_tasks,
     log_event,
 )
+from .integrations import n8n
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("orchestrator")
+
+
+def _dispatch_actions(
+    task_id: str, agent: Any, task: dict[str, Any], result: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """agent.actions() से मिले actions को n8n (ai-engine) पर भेजो।"""
+    try:
+        actions = agent.actions(task, result.get("output", "")) or []
+    except Exception:  # noqa: BLE001 - actions बनाने में error से task न रुके
+        logger.exception("Task %s: actions() में error", task_id)
+        return []
+
+    dispatched: list[dict[str, Any]] = []
+    for action in actions:
+        action_type = action.get("type", "generic")
+        res = n8n.trigger(action_type, action)
+        dispatched.append({"action": action_type, **res})
+        log_event(
+            task_id,
+            agent.name,
+            f"action '{action_type}' -> dispatched={res.get('dispatched')}",
+        )
+    return dispatched
 
 
 def process_task(task: dict[str, Any]) -> None:
@@ -60,6 +84,10 @@ def process_task(task: dict[str, Any]) -> None:
 
     try:
         result = agent.run(task)
+        # agent जो real actions चाहता है (email/WhatsApp आदि) उन्हें n8n पर भेजो
+        dispatched = _dispatch_actions(task_id, agent, task, result)
+        if dispatched:
+            result["dispatched_actions"] = dispatched
         complete_task(task_id, result)
         logger.info("✔ Task %s completed by '%s'", task_id, agent_type)
         log_event(task_id, agent_type, "Completed successfully")

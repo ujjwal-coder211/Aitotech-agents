@@ -98,5 +98,17 @@ class BaseAgent(ABC):
             lines.append(f"Details: {payload}")
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------
+    # Real-world actions (n8n / ai-engine के through dispatch होते हैं)
+    # ------------------------------------------------------------------
+    def actions(self, task: dict[str, Any], output: str) -> list[dict[str, Any]]:
+        """इस task के बाद कौन-से real actions trigger करने हैं।
+
+        Default: कुछ नहीं। Subclass override करके email/WhatsApp आदि लौटा सकता है।
+        हर action एक dict है: {"type": "email", "to": ..., "subject": ..., "body": ...}
+        Orchestrator इन्हें n8n पर dispatch करता है।
+        """
+        return []
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{type(self).__name__} name={self.name!r}>"

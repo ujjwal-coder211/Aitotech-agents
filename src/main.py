@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -59,6 +59,7 @@ def root() -> dict[str, Any]:
         "version": "0.1.0",
         "supabase_configured": settings.is_supabase_configured,
         "llm_configured": settings.is_llm_configured,
+        "n8n_configured": settings.is_n8n_configured,
         "agents": list(AGENT_REGISTRY.keys()),
     }
 
@@ -125,6 +126,43 @@ def get_leads(status: str | None = None, limit: int = 100) -> list[dict[str, Any
     """Website (Aitotech) से आए leads list करो।"""
     _require_db()
     return db.list_leads(status=status, limit=limit)
+
+
+class N8nEventRequest(BaseModel):
+    """ai-engine (n8n) से inbound event — एक नया task बनाता है।"""
+
+    title: str = Field(..., min_length=1)
+    agent_type: str = Field(..., examples=list(AGENT_REGISTRY.keys()))
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = Field(default=0, ge=0, le=10)
+
+
+@app.post("/webhooks/n8n", status_code=201)
+def n8n_inbound(
+    req: N8nEventRequest, x_api_key: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """n8n workflows (schedule/trigger) से नया task बनवाने के लिए।
+
+    Shared secret (N8N_API_KEY) से authenticate होता है ताकि कोई भी public
+    caller task न बना सके।
+    """
+    _require_db()
+    if settings.n8n_api_key and x_api_key != settings.n8n_api_key:
+        raise HTTPException(status_code=401, detail="Invalid x-api-key")
+    if req.agent_type not in AGENT_REGISTRY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid agent_type. Valid: {list(AGENT_REGISTRY)}",
+        )
+    task = db.create_task(
+        title=req.title,
+        agent_type=req.agent_type,
+        payload=req.payload,
+        priority=req.priority,
+    )
+    if task is None:
+        raise HTTPException(status_code=500, detail="Task बन नहीं पाया।")
+    return {"ok": True, "task_id": task["id"]}
 
 
 @app.post("/orchestrator/tick")

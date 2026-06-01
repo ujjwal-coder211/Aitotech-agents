@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # comma-separated allowed origins, "*" = सब allow (dev के लिए)
     website_allowed_origins: str = "*"
 
+    # ai-engine (self-hosted n8n) integration
+    # agents यहाँ webhook भेजकर real actions (email/WhatsApp/CRM) करवाते हैं
+    n8n_webhook_url: str = ""
+    # shared secret: outbound header में जाता है + inbound webhook verify करता है
+    n8n_api_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -44,6 +50,10 @@ class Settings(BaseSettings):
     @property
     def is_llm_configured(self) -> bool:
         return bool(self.groq_api_key)
+
+    @property
+    def is_n8n_configured(self) -> bool:
+        return bool(self.n8n_webhook_url)
 
     @property
     def cors_origins(self) -> list[str]:
