@@ -22,6 +22,8 @@ AGENTS_TABLE = "agents"
 LOGS_TABLE = "task_logs"
 LEADS_TABLE = "leads"
 SERVICES_TABLE = "services"
+OPPORTUNITIES_TABLE = "opportunities"
+MEMORY_TABLE = "company_memory"
 
 
 @lru_cache
@@ -96,21 +98,32 @@ def create_task(
     payload: dict[str, Any] | None = None,
     priority: int = 0,
 ) -> dict[str, Any] | None:
-    """नया task बनाओ (dashboard/API से इस्तेमाल होगा)।"""
+    """नया task बनाओ (dashboard/API से इस्तेमाल होगा)।
+
+    pipeline_id / parent_task_id payload में हों तो columns में भी copy कर देते हैं
+    (dashboard में pipeline lineage साफ़ दिखे)।
+    """
+    payload = payload or {}
+    row: dict[str, Any] = {
+        "title": title,
+        "agent_type": agent_type,
+        "payload": payload,
+        "priority": priority,
+        "status": "pending",
+    }
+    if payload.get("pipeline_id"):
+        row["pipeline_id"] = payload["pipeline_id"]
+    if payload.get("parent_task_id"):
+        row["parent_task_id"] = payload["parent_task_id"]
+
     client = get_client()
-    response = (
-        client.table(TASKS_TABLE)
-        .insert(
-            {
-                "title": title,
-                "agent_type": agent_type,
-                "payload": payload or {},
-                "priority": priority,
-                "status": "pending",
-            }
-        )
-        .execute()
-    )
+    try:
+        response = client.table(TASKS_TABLE).insert(row).execute()
+    except Exception:
+        # agar columns abhi DB me nahi (purana schema), to bina unke retry
+        row.pop("pipeline_id", None)
+        row.pop("parent_task_id", None)
+        response = client.table(TASKS_TABLE).insert(row).execute()
     return response.data[0] if response.data else None
 
 
@@ -163,6 +176,46 @@ def list_leads(status: str | None = None, limit: int = 100) -> list[dict[str, An
     query = client.table(LEADS_TABLE).select("*")
     if status:
         query = query.eq("status", status)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return response.data or []
+
+
+def create_opportunity(fields: dict[str, Any]) -> dict[str, Any] | None:
+    """Opportunity agent ka analysis save karo (shared company memory)."""
+    client = get_client()
+    response = client.table(OPPORTUNITIES_TABLE).insert(fields).execute()
+    return response.data[0] if response.data else None
+
+
+def list_opportunities(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    client = get_client()
+    query = client.table(OPPORTUNITIES_TABLE).select("*")
+    if status:
+        query = query.eq("status", status)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return response.data or []
+
+
+# --------------------------------------------------------------------------
+# Shared company memory (agent swarm ek connected brain)
+# --------------------------------------------------------------------------
+def create_memory(fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(MEMORY_TABLE).insert(fields).execute()
+    return response.data[0] if response.data else None
+
+
+def list_memory(
+    tags: list[str] | None = None,
+    kind: str | None = None,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    client = get_client()
+    query = client.table(MEMORY_TABLE).select("*")
+    if kind:
+        query = query.eq("kind", kind)
+    if tags:
+        query = query.contains("tags", tags)
     response = query.order("created_at", desc=True).limit(limit).execute()
     return response.data or []
 

@@ -24,6 +24,7 @@ from .config import settings
 from .database import (
     claim_task,
     complete_task,
+    create_task,
     fail_task,
     fetch_pending_tasks,
     log_event,
@@ -60,6 +61,38 @@ def _dispatch_actions(
     return dispatched
 
 
+def _spawn_next_tasks(
+    task_id: str, agent: Any, task: dict[str, Any], result: dict[str, Any]
+) -> list[str]:
+    """agent.next_tasks() se pipeline ke agle agents ke liye naye tasks banao."""
+    try:
+        next_specs = agent.next_tasks(task, result) or []
+    except Exception:  # noqa: BLE001
+        logger.exception("Task %s: next_tasks() me error", task_id)
+        return []
+
+    created: list[str] = []
+    for spec in next_specs:
+        try:
+            new_task = create_task(
+                title=spec["title"],
+                agent_type=spec["agent_type"],
+                payload=spec.get("payload", {}),
+                priority=spec.get("priority", 0),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Task %s: chained task create fail", task_id)
+            continue
+        if new_task:
+            created.append(new_task["id"])
+            log_event(
+                task_id,
+                agent.name,
+                f"chained -> '{spec['agent_type']}' task {new_task['id']}",
+            )
+    return created
+
+
 def process_task(task: dict[str, Any]) -> None:
     """एक task को claim करके उसके agent पर चलाओ।"""
     task_id = task["id"]
@@ -88,8 +121,17 @@ def process_task(task: dict[str, Any]) -> None:
         dispatched = _dispatch_actions(task_id, agent, task, result)
         if dispatched:
             result["dispatched_actions"] = dispatched
+        # pipeline: agle agents ke liye naye tasks banao (connected swarm)
+        spawned = _spawn_next_tasks(task_id, agent, task, result)
+        if spawned:
+            result["next_task_ids"] = spawned
         complete_task(task_id, result)
-        logger.info("✔ Task %s completed by '%s'", task_id, agent_type)
+        logger.info(
+            "✔ Task %s completed by '%s' (chained %d)",
+            task_id,
+            agent_type,
+            len(spawned),
+        )
         log_event(task_id, agent_type, "Completed successfully")
     except Exception as exc:  # noqa: BLE001 - एक task fail होने से loop न रुके
         logger.exception("x Task %s failed", task_id)

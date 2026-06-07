@@ -15,10 +15,17 @@ class Settings(BaseSettings):
     # Groq / LLM
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    # Website live chat — fast model for low latency
+    groq_chat_model: str = "llama-3.1-8b-instant"
 
     # Orchestrator
     orchestrator_poll_interval: int = 10
     orchestrator_batch_size: int = 5
+
+    # Agent swarm pipeline (agent-to-agent chaining)
+    # ek agent complete hone par next_agents ke liye naye tasks bante hain
+    pipeline_enabled: bool = True
+    pipeline_max_depth: int = 8
 
     # App
     app_env: str = "development"

@@ -21,6 +21,43 @@ Supabase = 🗄️ shared memory (tasks, leads, services, logs)।
 
 ---
 
+## Agent swarm (connected pipeline + shared memory)
+
+Agents ek connected swarm hai — ek ka output agle ka input. Sab ek **shared
+memory** (`company_memory` table) me likhte/padhte hain, isliye poora swarm ek
+brain ki tarah kaam karta hai. Har agent ka `next_agents` decide karta hai
+chaining:
+
+```
+research → opportunity → strategy → product ─┬→ dev → delivery
+                                             └→ marketing → sales
+
+standalone: finance, support  (kabhi bhi manually call karo)
+```
+
+| Agent | Role |
+|-------|------|
+| research | Market research, demand signals |
+| opportunity | Kya bechna, kisko, kaise, kitne me (money-making) |
+| strategy | Go-to-market plan, roadmap, KPIs |
+| product | Buildable productised offer + architecture |
+| dev | Tech build plan + code |
+| marketing | Positioning, content, campaigns |
+| sales | Outreach, cold email, closing (+ n8n email action) |
+| delivery | Client handoff, QA, onboarding |
+| finance | Pricing, margins, profit projection |
+| support | Existing client support |
+
+**Kaise chalu karo:**
+```
+POST /pipeline   { "title": "...", "start_agent": "research", "market": "...", "region": "..." }
+POST /orchestrator/tick     # agents ko chalao (ya APScheduler/cron se auto)
+GET  /memory?tag=<pipeline_id>   # swarm ne kya kya socha
+GET  /opportunities              # paisa-banane wale findings
+```
+
+---
+
 ## Data flow
 
 ```

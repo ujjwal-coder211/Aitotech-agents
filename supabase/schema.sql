@@ -34,8 +34,13 @@ create table if not exists public.tasks (
     updated_at  timestamptz not null default now()
 );
 
+-- pipeline lineage (agent-to-agent chaining) — existing tables ke liye safe add
+alter table public.tasks add column if not exists parent_task_id uuid;
+alter table public.tasks add column if not exists pipeline_id uuid;
+
 create index if not exists tasks_status_idx   on public.tasks (status);
 create index if not exists tasks_priority_idx on public.tasks (priority desc, created_at);
+create index if not exists tasks_pipeline_idx on public.tasks (pipeline_id);
 
 -- updated_at auto-update trigger
 create or replace function public.set_updated_at()
@@ -66,14 +71,19 @@ create table if not exists public.task_logs (
 create index if not exists task_logs_task_idx on public.task_logs (task_id);
 
 -- ------------------------------------------------------------
--- Seed: 5 core agents
+-- Seed: agent swarm (pipeline order)
 -- ------------------------------------------------------------
 insert into public.agents (agent_type, name, role) values
-    ('research', 'Research Agent',  'Market Research Analyst'),
-    ('strategy', 'Strategy Agent',  'Business Strategy Lead'),
-    ('dev',      'Dev Agent',       'Software Engineer'),
-    ('sales',    'Sales Agent',     'Sales & Outreach Specialist'),
-    ('delivery', 'Delivery Agent',  'Delivery & Client Success Manager')
+    ('research',    'Research Agent',    'Market Research Analyst'),
+    ('opportunity', 'Opportunity Agent', 'Business Opportunity & Monetization Analyst'),
+    ('strategy',    'Strategy Agent',    'Business Strategy Lead'),
+    ('product',     'Product Agent',     'Product Designer / Solution Architect'),
+    ('dev',         'Dev Agent',         'Software Engineer'),
+    ('marketing',   'Marketing Agent',   'Marketing & Content Strategist'),
+    ('sales',       'Sales Agent',       'Sales & Outreach Specialist'),
+    ('delivery',    'Delivery Agent',    'Delivery & Client Success Manager'),
+    ('finance',     'Finance Agent',     'Finance & Pricing Analyst'),
+    ('support',     'Support Agent',     'Customer Support Specialist')
 on conflict (agent_type) do nothing;
 
 -- ------------------------------------------------------------
@@ -111,13 +121,49 @@ create index if not exists leads_status_idx on public.leads (status);
 create index if not exists leads_created_idx on public.leads (created_at desc);
 
 -- ------------------------------------------------------------
+-- opportunities: paisa-banane wale business opportunities (Opportunity Agent)
+-- ------------------------------------------------------------
+create table if not exists public.opportunities (
+    id          uuid primary key default gen_random_uuid(),
+    title       text not null,
+    analysis    text,                          -- full agent output (markdown sections)
+    market      text,
+    region      text,
+    status      text not null default 'discovered',  -- discovered|qualified|pursuing|won|lost
+    priority    int,
+    task_id     uuid references public.tasks(id) on delete set null,
+    created_at  timestamptz not null default now()
+);
+
+create index if not exists opportunities_status_idx on public.opportunities (status);
+create index if not exists opportunities_created_idx on public.opportunities (created_at desc);
+
+-- ------------------------------------------------------------
+-- company_memory: shared brain — agents yahan se context padhte/likhte hain
+-- ------------------------------------------------------------
+create table if not exists public.company_memory (
+    id          uuid primary key default gen_random_uuid(),
+    kind        text not null default 'note',  -- research|opportunity|strategy|product|dev|marketing|sales|delivery|finance|support|note
+    title       text,
+    content     text,
+    tags        text[] not null default '{}',  -- pipeline_id yahan store hota hai
+    agent       text,
+    task_id     uuid references public.tasks(id) on delete set null,
+    created_at  timestamptz not null default now()
+);
+
+create index if not exists memory_kind_idx    on public.company_memory (kind);
+create index if not exists memory_tags_idx     on public.company_memory using gin (tags);
+create index if not exists memory_created_idx  on public.company_memory (created_at desc);
+
+-- ------------------------------------------------------------
 -- Seed: Aitotech की sample services (अपने हिसाब से edit करें)
 -- ------------------------------------------------------------
 insert into public.services (slug, name, description, price, sort_order) values
-    ('ai-automation',  'AI Automation',        'Business workflows को AI agents से automate करें।', 'Custom', 1),
-    ('ai-chatbots',    'AI Chatbots',          'Website व WhatsApp के लिए smart chatbots।',          '₹19,999/mo', 2),
-    ('web-development', 'Web Development',      'Modern, fast websites और web apps।',                 '₹49,999+', 3),
-    ('data-analytics', 'Data & Analytics',     'Data pipelines, dashboards और insights।',            'Custom', 4)
+    ('data-automation',      'Data Automation',      'AI-driven data pipelines, real-time sync, schema intelligence.', 'Custom quote', 1),
+    ('workflow-automation',  'Workflow Automation',  'Multi-app orchestration, approvals, SLA monitoring.',           'Custom quote', 2),
+    ('invoice-intelligence', 'Invoice Intelligence', 'OCR + NLP invoice extraction, PO matching, ERP integration.', 'Custom quote', 3),
+    ('custom-ai',            'Custom AI Systems',    'Fine-tuned LLMs, private RAG, autonomous agents in your VPC.',  'Custom quote', 4)
 on conflict (slug) do nothing;
 
 -- ------------------------------------------------------------

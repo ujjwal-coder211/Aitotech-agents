@@ -128,6 +128,68 @@ def get_leads(status: str | None = None, limit: int = 100) -> list[dict[str, Any
     return db.list_leads(status=status, limit=limit)
 
 
+@app.get("/opportunities")
+def get_opportunities(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    """Opportunity Agent ke findings — kya bechna hai, kisko, kaise."""
+    _require_db()
+    return db.list_opportunities(status=status, limit=limit)
+
+
+@app.get("/memory")
+def get_memory(
+    tag: str | None = None, kind: str | None = None, limit: int = 30
+) -> list[dict[str, Any]]:
+    """Shared company memory — agents ne aapas me kya context share kiya."""
+    _require_db()
+    tags = [tag] if tag else None
+    return db.list_memory(tags=tags, kind=kind, limit=limit)
+
+
+class PipelineRequest(BaseModel):
+    """Pura money-making pipeline kick off karo (research/opportunity se shuru)."""
+
+    title: str = Field(..., min_length=1, examples=["Invoice automation for Indian SMBs"])
+    start_agent: str = Field(default="research", examples=["research", "opportunity"])
+    market: str | None = None
+    region: str | None = None
+    notes: str | None = None
+    priority: int = Field(default=7, ge=0, le=10)
+
+
+@app.post("/pipeline", status_code=201)
+def start_pipeline(req: PipelineRequest) -> dict[str, Any]:
+    """Ek autonomous pipeline shuru karo — agents khud chain hote jaayenge.
+
+    research → opportunity → strategy → product → dev/marketing → sales/delivery
+    """
+    _require_db()
+    if req.start_agent not in AGENT_REGISTRY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid start_agent. Valid: {list(AGENT_REGISTRY)}",
+        )
+    task = db.create_task(
+        title=req.title,
+        agent_type=req.start_agent,
+        payload={
+            "pipeline_title": req.title,
+            "pipeline_depth": 0,
+            "market": req.market,
+            "region": req.region,
+            "message": req.notes,
+        },
+        priority=req.priority,
+    )
+    if task is None:
+        raise HTTPException(status_code=500, detail="Pipeline start nahi hua.")
+    return {
+        "ok": True,
+        "task_id": task["id"],
+        "start_agent": req.start_agent,
+        "message": "Pipeline shuru — orchestrator chalao (/orchestrator/tick) ya wait karo.",
+    }
+
+
 class N8nEventRequest(BaseModel):
     """ai-engine (n8n) से inbound event — एक नया task बनाता है।"""
 

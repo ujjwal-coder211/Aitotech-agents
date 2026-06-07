@@ -21,7 +21,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, Field
 
 from .. import database as db
-from ..agents import get_agent
 from ..config import settings
 
 logger = logging.getLogger("integration.website")
@@ -52,7 +51,84 @@ class InquiryRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, examples=["आपकी AI automation service में क्या मिलता है?"])
-    agent_type: str = "sales"
+    agent_type: str = "website"  # legacy field; public chat always uses website assistant
+
+
+# Aitotech company context (website siteContent.ts ke saath aligned)
+_AITOTECH_FALLBACK_SERVICES = """
+- Data Automation: AI-driven data pipelines, real-time sync, schema intelligence, quality scoring.
+- Workflow Automation: Multi-app orchestration, smart routing, approvals, SLA monitoring.
+- Invoice Intelligence: OCR + NLP invoice extraction, PO matching, ERP integration, spend analytics.
+- Custom AI Systems: Fine-tuned LLMs, private RAG, autonomous agents in your VPC.
+""".strip()
+
+WEBSITE_CHAT_SYSTEM_PROMPT = """You are AitoTech's website AI assistant (AitoTech = AI Automation Agency, Delhi India).
+
+Your job: help website visitors understand what AitoTech does and which service fits them.
+You represent AitoTech — you are NOT helping the visitor write their own cold emails or sales outreach.
+
+About AitoTech:
+- Tagline: Automate the Work. Amplify the Impact.
+- We design intelligent automation — data pipelines, workflow orchestration, invoice/finance ops, custom AI agents.
+- Contact: info@aitotech.in | Response within 24 business hours | Book a call via the website contact form.
+
+Rules:
+- Answer in the same language the visitor uses (English or Hindi/Hinglish).
+- Be concise (2–4 short paragraphs max), friendly, professional.
+- Mention relevant AitoTech services when asked "what do you do" or "pricing".
+- Pricing is custom per project — invite them to contact form or book a call; do not invent exact prices unless listed in services context.
+- Never ask the visitor what product THEY want to promote — that is wrong for this role.
+- If unsure, suggest they fill the contact form with their automation goals.
+"""
+
+
+def _build_services_context() -> str:
+    """Supabase services, ya fallback Aitotech catalog."""
+    if settings.is_supabase_configured:
+        try:
+            services = db.list_services(active_only=True)
+            if services:
+                return "AitoTech services:\n" + "\n".join(
+                    f"- {s['name']}: {s.get('description', '')}"
+                    + (f" (from {s['price']})" if s.get("price") else "")
+                    for s in services
+                )
+        except Exception:  # noqa: BLE001
+            pass
+    return f"AitoTech services:\n{_AITOTECH_FALLBACK_SERVICES}"
+
+
+def _website_chat_answer(message: str) -> str:
+    """Public chat — dedicated AitoTech assistant prompt (not sales outreach agent)."""
+    if not settings.is_llm_configured:
+        return (
+            "Hi! AitoTech is an AI Automation Agency — we help businesses automate data "
+            "pipelines, workflows, invoices, and custom AI systems. Email us at info@aitotech.in "
+            "or use the contact form for a strategy call."
+        )
+    try:
+        from groq import Groq
+
+        client = Groq(api_key=settings.groq_api_key)
+        services_context = _build_services_context()
+        completion = client.chat.completions.create(
+            model=settings.groq_chat_model,
+            messages=[
+                {"role": "system", "content": WEBSITE_CHAT_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"{services_context}\n\nVisitor message: {message}",
+                },
+            ],
+            temperature=0.6,
+        )
+        return completion.choices[0].message.content or ""
+    except Exception as exc:
+        logger.error("website chat LLM fail: %s", exc)
+        return (
+            "Sorry, I'm having trouble right now. AitoTech builds AI automation for data, "
+            "workflows, and finance ops — reach us at info@aitotech.in and we'll reply within 24 hours."
+        )
 
 
 # --------------------------------------------------------------------------
@@ -160,35 +236,9 @@ def submit_inquiry(req: InquiryRequest) -> dict[str, Any]:
 
 @router.post("/chat")
 def chat(req: ChatRequest) -> dict[str, Any]:
-    """Visitor का सवाल तुरंत agent से जवाब दिलाओ (synchronous).
-
-    services का context भी agent को दिया जाता है ताकि जवाब company-specific हो।
-    DB optional है — सिर्फ services context के लिए use होता है।
-    """
-    services_context = ""
-    if settings.is_supabase_configured:
-        try:
-            services = db.list_services(active_only=True)
-            if services:
-                services_context = "Company services:\n" + "\n".join(
-                    f"- {s['name']}: {s.get('description', '')}"
-                    + (f" (Price: {s['price']})" if s.get("price") else "")
-                    for s in services
-                )
-        except Exception:  # noqa: BLE001
-            services_context = ""
-
-    try:
-        agent = get_agent(req.agent_type)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    prompt = req.message
-    if services_context:
-        prompt = f"{services_context}\n\nVisitor का सवाल: {req.message}"
-
-    answer = agent.think(prompt)
-    return {"agent": agent.name, "answer": answer}
+    """Visitor का सवाल — AitoTech website assistant (company-specific, not sales outreach)."""
+    answer = _website_chat_answer(req.message.strip())
+    return {"agent": "Aitotech AI", "answer": answer}
 
 
 def _require_db() -> None:
