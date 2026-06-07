@@ -402,7 +402,8 @@ def debug_db() -> dict[str, Any]:
     (sirf error message return karta hai, koi secret nahi)।
     """
     out: dict[str, Any] = {
-        "supabase_url_set": bool(settings.supabase_url),
+        "supabase_url_raw": settings.supabase_url,
+        "supabase_url_clean": db.clean_supabase_url(settings.supabase_url),
         "supabase_key_set": bool(settings.supabase_key),
         "key_prefix": (settings.supabase_key or "")[:8],
         "key_len": len(settings.supabase_key or ""),

@@ -28,6 +28,25 @@ ADVICE_TABLE = "advice_requests"
 DEALS_TABLE = "deals"
 
 
+def clean_supabase_url(raw: str) -> str:
+    """SUPABASE_URL ko clean karo -> sirf https://<ref>.supabase.co.
+
+    PGRST125 ('Invalid path specified') tab aata hai jab URL me extra path
+    (jaise /rest/v1) ya trailing slash ho. Yahan hum scheme+host hi rakhte hain.
+    """
+    from urllib.parse import urlparse
+
+    raw = (raw or "").strip()
+    if not raw:
+        return raw
+    if "://" not in raw:
+        raw = "https://" + raw
+    parsed = urlparse(raw)
+    scheme = parsed.scheme or "https"
+    host = parsed.netloc or parsed.path  # agar netloc khaali ho
+    return f"{scheme}://{host}".rstrip("/")
+
+
 @lru_cache
 def get_client() -> Client:
     """Return a cached Supabase client.
@@ -39,8 +58,9 @@ def get_client() -> Client:
             "Supabase configured नहीं है। .env में SUPABASE_URL और "
             "SUPABASE_KEY डालें (देखें .env.example)।"
         )
-    logger.debug("Creating Supabase client for %s", settings.supabase_url)
-    return create_client(settings.supabase_url, settings.supabase_key)
+    url = clean_supabase_url(settings.supabase_url)
+    logger.debug("Creating Supabase client for %s", url)
+    return create_client(url, settings.supabase_key)
 
 
 # --------------------------------------------------------------------------
