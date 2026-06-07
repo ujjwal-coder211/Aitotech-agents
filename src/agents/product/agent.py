@@ -9,7 +9,7 @@ class ProductAgent(BaseAgent):
     name = "product"
     role = "Product Designer / Solution Architect"
     memory_kind = "product"
-    next_agents = ["dev", "marketing"]
+    next_agents = ["demo"]
     system_prompt = (
         "You are the Product/Solution Architect at an automation agency. Based on the "
         "opportunity and strategy provided, define the productised automation offer:\n"

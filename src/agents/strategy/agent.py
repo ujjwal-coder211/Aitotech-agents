@@ -9,7 +9,7 @@ class StrategyAgent(BaseAgent):
     name = "strategy"
     role = "Business Strategy Lead"
     memory_kind = "strategy"
-    next_agents = ["product"]
+    next_agents = ["sales"]
     system_prompt = (
         "You are the Business Strategy Lead. Take the opportunity/context provided and "
         "turn it into a concrete go-to-market plan:\n"

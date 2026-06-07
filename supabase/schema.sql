@@ -206,6 +206,87 @@ create trigger trg_deals_updated_at
     before update on public.deals
     for each row execute function public.set_updated_at();
 
+-- deals: payment fields (Razorpay) — paisa seedha bank tak
+alter table public.deals add column if not exists client_name    text;
+alter table public.deals add column if not exists client_email   text;
+alter table public.deals add column if not exists payment_link    text;
+alter table public.deals add column if not exists payment_ref     text;   -- razorpay payment_link id
+alter table public.deals add column if not exists payment_status  text default 'unpaid'; -- unpaid|sent|paid|failed
+
+-- ------------------------------------------------------------
+-- prospects: scout agent ke khoje hue real businesses (autonomous prospecting)
+-- ------------------------------------------------------------
+create table if not exists public.prospects (
+    id            uuid primary key default gen_random_uuid(),
+    business_name text not null,
+    industry      text,
+    region        text,
+    website       text,
+    contact_name  text,
+    contact_email text,
+    contact_phone text,
+    profile       text,                          -- scout ka analysis (kya karte hain, pain points)
+    fit_score     int,                            -- 1-10 kitne acche fit hain
+    status        text not null default 'new',    -- new|analyzing|outreach|engaged|client|dead
+    pipeline_id   uuid,
+    task_id       uuid references public.tasks(id) on delete set null,
+    created_at    timestamptz not null default now()
+);
+
+create index if not exists prospects_status_idx  on public.prospects (status);
+create index if not exists prospects_created_idx  on public.prospects (created_at desc);
+
+-- ------------------------------------------------------------
+-- demos: client ko dikhane se pehle demo + approval (Master + client)
+-- ------------------------------------------------------------
+create table if not exists public.demos (
+    id              uuid primary key default gen_random_uuid(),
+    title           text not null,
+    pipeline_id     uuid,
+    deal_id         uuid references public.deals(id) on delete set null,
+    summary         text,                          -- demo me kya dikhega (script/walkthrough)
+    artifact_url    text,                          -- link to demo (video/app/doc)
+    master_approved boolean not null default false,
+    client_approved boolean not null default false,
+    status          text not null default 'draft', -- draft|master_review|client_review|approved|rejected
+    task_id         uuid references public.tasks(id) on delete set null,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now()
+);
+
+create index if not exists demos_status_idx on public.demos (status);
+
+drop trigger if exists trg_demos_updated_at on public.demos;
+create trigger trg_demos_updated_at
+    before update on public.demos
+    for each row execute function public.set_updated_at();
+
+-- ------------------------------------------------------------
+-- feedback: Master/client ka feedback -> final product me apply hota hai
+-- ------------------------------------------------------------
+create table if not exists public.feedback (
+    id           uuid primary key default gen_random_uuid(),
+    pipeline_id  uuid,
+    deal_id      uuid references public.deals(id) on delete set null,
+    source       text not null default 'master',  -- master|client
+    content      text not null,
+    status       text not null default 'open',     -- open|applied
+    task_id      uuid references public.tasks(id) on delete set null,
+    created_at   timestamptz not null default now()
+);
+
+create index if not exists feedback_status_idx on public.feedback (status);
+
+-- ------------------------------------------------------------
+-- Seed: naye agents (scout/requirements/demo/feedback)
+-- ------------------------------------------------------------
+insert into public.agents (agent_type, name, role) values
+    ('scout',        'Scout Agent',        'Autonomous Prospecting & Business Discovery'),
+    ('requirements', 'Requirements Agent', 'Client Requirements & Scoping'),
+    ('demo',         'Demo Agent',         'Solution Demo Builder'),
+    ('feedback',     'Feedback Agent',     'Feedback Integration Specialist')
+on conflict (agent_type) do nothing;
+
 -- ------------------------------------------------------------
 -- Seed: Aitotech की sample services (अपने हिसाब से edit करें)
 -- ------------------------------------------------------------

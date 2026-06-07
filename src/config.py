@@ -31,6 +31,23 @@ class Settings(BaseSettings):
     # taaki company "running mode" me rahe (manual tick ki zaroorat nahi)
     auto_orchestrate: bool = True
 
+    # Autonomous growth loop: company khud market dhoondh ke prospecting shuru kare
+    # (user ko har baar task dene ki zaroorat nahi)
+    auto_growth: bool = False           # production me ON karein (RAILWAY var se)
+    growth_interval_min: int = 360       # har kitne minute me ek naya scout cycle
+    growth_markets: str = ""             # comma-separated, e.g. "SMB accounting India, dental clinics"
+    growth_max_active_pipelines: int = 3 # itne se zyada active ho to naya cycle skip
+
+    # Owner (Master) — Sayra delivery/requirement notifications iske liye banati hai
+    owner_email: str = ""
+    owner_name: str = "Master Ujjwal"
+
+    # Payments (Razorpay) — paisa seedha aapke bank account me settle hota hai
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+    payment_currency: str = "INR"
+
     # App
     app_env: str = "development"
     log_level: str = "INFO"
@@ -65,6 +82,17 @@ class Settings(BaseSettings):
     @property
     def is_n8n_configured(self) -> bool:
         return bool(self.n8n_webhook_url)
+
+    @property
+    def is_payments_configured(self) -> bool:
+        return bool(self.razorpay_key_id and self.razorpay_key_secret)
+
+    @property
+    def growth_market_list(self) -> list[str]:
+        raw = (self.growth_markets or "").strip()
+        if not raw:
+            return []
+        return [m.strip() for m in raw.split(",") if m.strip()]
 
     @property
     def cors_origins(self) -> list[str]:

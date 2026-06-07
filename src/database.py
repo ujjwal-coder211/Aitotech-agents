@@ -26,6 +26,9 @@ OPPORTUNITIES_TABLE = "opportunities"
 MEMORY_TABLE = "company_memory"
 ADVICE_TABLE = "advice_requests"
 DEALS_TABLE = "deals"
+PROSPECTS_TABLE = "prospects"
+DEMOS_TABLE = "demos"
+FEEDBACK_TABLE = "feedback"
 
 
 def clean_supabase_url(raw: str) -> str:
@@ -386,6 +389,113 @@ def list_pipelines(limit_tasks: int = 500) -> list[dict[str, Any]]:
         )
     # newest pipelines first
     return sorted(groups.values(), key=lambda g: g["created_at"] or "", reverse=True)
+
+
+def count_active_pipelines() -> int:
+    """Kitni pipelines abhi chal rahi (pending/in_progress tasks wali)।"""
+    client = get_client()
+    res = (
+        client.table(TASKS_TABLE)
+        .select("pipeline_id,status")
+        .in_("status", ["pending", "in_progress"])
+        .limit(1000)
+        .execute()
+    )
+    pids = {r.get("pipeline_id") for r in (res.data or []) if r.get("pipeline_id")}
+    return len(pids)
+
+
+# --------------------------------------------------------------------------
+# Prospects (scout agent ke khoje businesses)
+# --------------------------------------------------------------------------
+def create_prospect(fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(PROSPECTS_TABLE).insert(fields).execute()
+    return response.data[0] if response.data else None
+
+
+def list_prospects(status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    client = get_client()
+    query = client.table(PROSPECTS_TABLE).select("*")
+    if status:
+        query = query.eq("status", status)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return response.data or []
+
+
+def update_prospect(prospect_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(PROSPECTS_TABLE).update(fields).eq("id", prospect_id).execute()
+    return response.data[0] if response.data else None
+
+
+# --------------------------------------------------------------------------
+# Demos (client ko dikhane se pehle approval)
+# --------------------------------------------------------------------------
+def create_demo(fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(DEMOS_TABLE).insert(fields).execute()
+    return response.data[0] if response.data else None
+
+
+def list_demos(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    client = get_client()
+    query = client.table(DEMOS_TABLE).select("*")
+    if status:
+        query = query.eq("status", status)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return response.data or []
+
+
+def get_demo(demo_id: str) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(DEMOS_TABLE).select("*").eq("id", demo_id).limit(1).execute()
+    return response.data[0] if response.data else None
+
+
+def update_demo(demo_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(DEMOS_TABLE).update(fields).eq("id", demo_id).execute()
+    return response.data[0] if response.data else None
+
+
+# --------------------------------------------------------------------------
+# Feedback (Master/client -> final product)
+# --------------------------------------------------------------------------
+def create_feedback(fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(FEEDBACK_TABLE).insert(fields).execute()
+    return response.data[0] if response.data else None
+
+
+def list_feedback(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    client = get_client()
+    query = client.table(FEEDBACK_TABLE).select("*")
+    if status:
+        query = query.eq("status", status)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return response.data or []
+
+
+def update_feedback(feedback_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(FEEDBACK_TABLE).update(fields).eq("id", feedback_id).execute()
+    return response.data[0] if response.data else None
+
+
+# --------------------------------------------------------------------------
+# Deal payment helpers (Razorpay)
+# --------------------------------------------------------------------------
+def find_deal_by_payment_ref(payment_ref: str) -> dict[str, Any] | None:
+    client = get_client()
+    response = (
+        client.table(DEALS_TABLE)
+        .select("*")
+        .eq("payment_ref", payment_ref)
+        .limit(1)
+        .execute()
+    )
+    return response.data[0] if response.data else None
 
 
 def log_event(task_id: str, agent_name: str, message: str, level: str = "info") -> None:

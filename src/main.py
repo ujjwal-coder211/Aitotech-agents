@@ -16,15 +16,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .agents import AGENT_REGISTRY
 from .config import settings
 from . import database as db
+from .integrations import payments
 from .integrations.website import router as website_router
-from .orchestrator import process_task, run_once
+from .orchestrator import (
+    complete_payment_by_ref,
+    process_task,
+    run_once,
+    start_growth_cycle,
+)
 
 app = FastAPI(
     title="AI Business Enterprise API",
@@ -60,6 +66,8 @@ def root() -> dict[str, Any]:
         "supabase_configured": settings.is_supabase_configured,
         "llm_configured": settings.is_llm_configured,
         "n8n_configured": settings.is_n8n_configured,
+        "payments_configured": settings.is_payments_configured,
+        "auto_growth": settings.auto_growth,
         "agents": list(AGENT_REGISTRY.keys()),
     }
 
@@ -344,6 +352,155 @@ def orchestrator_tick() -> dict[str, int]:
 
 
 # --------------------------------------------------------------------------
+# Autonomous growth (scout) + fulfillment + prospects/demos/feedback/payments
+# --------------------------------------------------------------------------
+@app.get("/prospects")
+def get_prospects(status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    _require_db()
+    return db.list_prospects(status=status, limit=limit)
+
+
+@app.get("/demos")
+def get_demos(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    _require_db()
+    return db.list_demos(status=status, limit=limit)
+
+
+@app.get("/feedback")
+def get_feedback(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    _require_db()
+    return db.list_feedback(status=status, limit=limit)
+
+
+class GrowthMarketRequest(BaseModel):
+    market: str | None = Field(default=None, description="Specific market; warna config se random")
+    region: str = "India"
+
+
+@app.post("/growth/tick")
+def growth_tick(req: GrowthMarketRequest | None = None) -> dict[str, Any]:
+    """Autonomous growth cycle — ek naya scout pipeline shuru karo।"""
+    _require_db()
+    if req and req.market:
+        task = db.create_task(
+            title=f"[scout] {req.market}"[:120],
+            agent_type="scout",
+            payload={"market": req.market, "region": req.region},
+            priority=7,
+        )
+        return {"started": 1 if task else 0, "market": req.market,
+                "task_id": (task or {}).get("id")}
+    return start_growth_cycle()
+
+
+@app.get("/growth/status")
+def growth_status() -> dict[str, Any]:
+    active = 0
+    try:
+        if settings.is_supabase_configured:
+            active = db.count_active_pipelines()
+    except Exception:  # noqa: BLE001
+        active = 0
+    return {
+        "auto_growth": settings.auto_growth,
+        "interval_min": settings.growth_interval_min,
+        "markets": settings.growth_market_list,
+        "active_pipelines": active,
+        "max_active": settings.growth_max_active_pipelines,
+        "payments_configured": settings.is_payments_configured,
+    }
+
+
+class FulfillmentRequest(BaseModel):
+    title: str = Field(..., min_length=1, examples=["Acme Corp — invoice automation"])
+    client_name: str | None = None
+    client_email: str | None = None
+    amount: float = Field(default=0, description="Deal value INR (payment ke liye)")
+    notes: str | None = Field(default=None, description="Client requirement / sales context")
+    pipeline_id: str | None = None
+
+
+@app.post("/fulfillment/start", status_code=201)
+def fulfillment_start(req: FulfillmentRequest) -> dict[str, Any]:
+    """Client agree kar gaya — fulfillment pipeline shuru (requirements → ... → delivery)।"""
+    _require_db()
+    payload: dict[str, Any] = {
+        "pipeline_title": req.title,
+        "client_name": req.client_name,
+        "client_email": req.client_email,
+        "amount": req.amount,
+        "notes": req.notes,
+    }
+    if req.pipeline_id:
+        payload["pipeline_id"] = req.pipeline_id
+    task = db.create_task(
+        title=f"[requirements] {req.title}"[:120],
+        agent_type="requirements",
+        payload=payload,
+        priority=8,
+    )
+    if task is None:
+        raise HTTPException(status_code=500, detail="Fulfillment start nahi hua.")
+    return {"ok": True, "task_id": task["id"], "message": "Fulfillment pipeline shuru."}
+
+
+class DemoDecisionRequest(BaseModel):
+    who: str = Field(default="master", examples=["master", "client"])
+    approved: bool = True
+
+
+@app.post("/demos/{demo_id}/decision")
+def demo_decision(demo_id: str, req: DemoDecisionRequest) -> dict[str, Any]:
+    """Demo par master/client approval record karo (UI convenience)।"""
+    _require_db()
+    demo = db.get_demo(demo_id)
+    if demo is None:
+        raise HTTPException(status_code=404, detail="Demo nahi mila.")
+    field = "master_approved" if req.who == "master" else "client_approved"
+    fields: dict[str, Any] = {field: req.approved}
+    updated = {**demo, **fields}
+    if updated.get("master_approved") and updated.get("client_approved"):
+        fields["status"] = "approved"
+    elif not req.approved:
+        fields["status"] = "rejected"
+    db.update_demo(demo_id, fields)
+    return {"ok": True, "demo_id": demo_id, **fields}
+
+
+@app.post("/payments/webhook")
+async def payments_webhook(request: Request) -> dict[str, Any]:
+    """Razorpay webhook — payment_link.paid par deal paid + delivery shuru."""
+    raw = await request.body()
+    sig = request.headers.get("X-Razorpay-Signature", "")
+    if settings.razorpay_webhook_secret and not payments.verify_webhook_signature(raw, sig):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    import json
+
+    try:
+        event = json.loads(raw.decode("utf-8") or "{}")
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    evt_type = event.get("event", "")
+    if evt_type not in ("payment_link.paid", "payment_link.partially_paid"):
+        return {"ok": True, "ignored": evt_type}
+
+    # payment_link id nikaalo
+    try:
+        plink = (
+            event.get("payload", {})
+            .get("payment_link", {})
+            .get("entity", {})
+        )
+        ref = plink.get("id")
+    except Exception:  # noqa: BLE001
+        ref = None
+    if not ref:
+        return {"ok": False, "reason": "no payment_link id"}
+    return complete_payment_by_ref(ref)
+
+
+# --------------------------------------------------------------------------
 # Auto-orchestrator: company ko "running mode" me rakho (background scheduler)
 # --------------------------------------------------------------------------
 _scheduler = None
@@ -357,6 +514,16 @@ def _auto_tick() -> None:
         import logging
 
         logging.getLogger("auto-orchestrator").exception("auto tick fail")
+
+
+def _growth_tick() -> None:
+    """Background job — autonomous prospecting cycle (best-effort)।"""
+    try:
+        start_growth_cycle()
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("auto-growth").exception("growth tick fail")
 
 
 @app.on_event("startup")
@@ -376,6 +543,17 @@ def _start_scheduler() -> None:
             max_instances=1,
             coalesce=True,
         )
+        # Autonomous growth: company khud naye prospects dhoondhti rahegi
+        if settings.auto_growth and settings.growth_market_list:
+            _scheduler.add_job(
+                _growth_tick,
+                "interval",
+                minutes=max(5, settings.growth_interval_min),
+                id="auto_growth",
+                max_instances=1,
+                coalesce=True,
+                next_run_time=None,
+            )
         _scheduler.start()
     except Exception:  # noqa: BLE001
         import logging

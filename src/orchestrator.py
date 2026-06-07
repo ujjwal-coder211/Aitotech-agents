@@ -19,6 +19,9 @@ import logging
 import time
 from typing import Any
 
+import random
+
+from . import database as db
 from . import memory, sayra
 from .agents import get_agent
 from .config import settings
@@ -108,6 +111,96 @@ def _raise_advice_request(task: dict[str, Any], agent: Any, result: dict[str, An
         logger.exception("Task %s: advice request banane me fail", task.get("id"))
 
 
+def _mark_payment_paid(task_id: str | None) -> str | None:
+    """Payment task ke result se deal nikaal ke 'paid' mark karo (manual confirm)।"""
+    if not task_id:
+        return None
+    try:
+        ptask = db.get_task(task_id)
+        result = (ptask or {}).get("result") or {}
+        deal_id = result.get("deal_id")
+        if not deal_id:
+            return None
+        deal = None
+        try:
+            deals = db.list_deals(limit=1000)
+            deal = next((d for d in deals if d.get("id") == deal_id), None)
+        except Exception:  # noqa: BLE001
+            deal = None
+        amount = (deal or {}).get("projected_revenue") or 0
+        db.update_deal(
+            deal_id,
+            {"payment_status": "paid", "status": "won", "actual_revenue": amount},
+        )
+        return deal_id
+    except Exception:  # noqa: BLE001
+        logger.exception("mark payment paid fail")
+        return None
+
+
+def _spawn_delivery_for_pipeline(pipeline_id: str | None, deal: dict[str, Any]) -> list[str]:
+    """Payment aane par delivery task banao (webhook path)।"""
+    if not pipeline_id:
+        return []
+    payload = {
+        "pipeline_id": pipeline_id,
+        "pipeline_title": deal.get("title"),
+        "deal_id": deal.get("id"),
+        "client_email": deal.get("client_email"),
+        "client_name": deal.get("client_name"),
+    }
+    t = create_task(
+        title=f"[delivery] {deal.get('title', 'Engagement')}"[:120],
+        agent_type="delivery",
+        payload=payload,
+        priority=6,
+    )
+    return [t["id"]] if t else []
+
+
+def complete_payment_by_ref(payment_ref: str) -> dict[str, Any]:
+    """Razorpay webhook (payment_link.paid) → deal paid + delivery shuru."""
+    deal = db.find_deal_by_payment_ref(payment_ref)
+    if not deal:
+        return {"ok": False, "reason": "deal not found for payment_ref"}
+    if deal.get("payment_status") == "paid":
+        return {"ok": True, "deal_id": deal["id"], "already": True, "spawned": []}
+    amount = deal.get("projected_revenue") or 0
+    db.update_deal(
+        deal["id"],
+        {"payment_status": "paid", "status": "won", "actual_revenue": amount},
+    )
+    spawned = _spawn_delivery_for_pipeline(deal.get("pipeline_id"), deal)
+    logger.info("Payment paid for deal %s — delivery spawned (%d)", deal["id"], len(spawned))
+    return {"ok": True, "deal_id": deal["id"], "spawned": spawned}
+
+
+def start_growth_cycle() -> dict[str, Any]:
+    """Autonomous prospecting — company khud ek naya scout pipeline shuru karti hai।"""
+    if not settings.auto_growth:
+        return {"started": 0, "reason": "auto_growth off"}
+    markets = settings.growth_market_list
+    if not markets:
+        return {"started": 0, "reason": "GROWTH_MARKETS set nahi hai"}
+    try:
+        active = db.count_active_pipelines()
+    except Exception:  # noqa: BLE001
+        active = 0
+    if active >= settings.growth_max_active_pipelines:
+        return {"started": 0, "reason": f"{active} active pipelines (max reached)"}
+    market = random.choice(markets)
+    task = create_task(
+        title=f"[scout] {market}"[:120],
+        agent_type="scout",
+        payload={"market": market, "region": "India"},
+        priority=7,
+    )
+    if not task:
+        return {"started": 0, "reason": "scout task create fail"}
+    logger.info("🌱 Growth cycle: scout pipeline shuru for '%s'", market)
+    return {"started": 1, "market": market, "task_id": task["id"]}
+
+
 def resume_after_advice(
     advice: dict[str, Any], decision: str, response_text: str
 ) -> list[str]:
@@ -137,6 +230,12 @@ def resume_after_advice(
     if "reject" in d:
         logger.info("Advice: REJECT — pipeline %s yahin rukega", pipeline_id)
         return []
+
+    # payment gate: Master ne 'mark paid' kiya -> deal paid + actual revenue
+    if agent_name == "payment":
+        deal_id = _mark_payment_paid(task_id)
+        if deal_id:
+            logger.info("Payment manually marked paid (deal %s)", deal_id)
 
     # 2. Gated agent ke aage ke agents ko chalao, advice carry karte hue
     from .database import get_task

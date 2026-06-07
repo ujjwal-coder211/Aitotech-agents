@@ -16,10 +16,31 @@ _GATE_PROMPTS: dict[str, dict[str, Any]] = {
     "opportunity": {
         "question": (
             "Opportunity Agent ne ek paisa-banane wali opportunity nikali hai. "
-            "Aage badhein (strategy + product banayein)? Aapki go/no-go + koi "
-            "advice chahiye."
+            "Aage badhein (strategy + outreach)? Aapki go/no-go + koi advice chahiye."
         ),
         "options": ["Approve & continue", "Reject", "Revise with my advice"],
+    },
+    "requirements": {
+        "question": (
+            "Client aage badhne ko taiyar hai. Requirements ready hain — aur niche "
+            "likha hai ki deliver karne ke liye AAPSE kya chahiye. Aage badhein "
+            "(product + demo banayein)?"
+        ),
+        "options": ["Approve & continue", "Reject", "Revise with my advice"],
+    },
+    "demo": {
+        "question": (
+            "Demo taiyar hai — pehle aap dekh lo, phir client ko dikhao. Dono OK karein "
+            "to payment collect karke deliver karenge. Demo approve karein?"
+        ),
+        "options": ["Approve & continue", "Reject", "Revise with my advice"],
+    },
+    "payment": {
+        "question": (
+            "Payment link ready hai (neeche). Client ko bhej do. Jab paisa aa jaye "
+            "(ya aap manually confirm karo) tab delivery shuru hogi. Aage badhein?"
+        ),
+        "options": ["Mark paid & deliver", "Reject", "Revise with my advice"],
     },
 }
 
