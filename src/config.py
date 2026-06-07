@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     pipeline_enabled: bool = True
     pipeline_max_depth: int = 8
 
+    # Auto-orchestrate: API server ke andar hi background scheduler chalega
+    # taaki company "running mode" me rahe (manual tick ki zaroorat nahi)
+    auto_orchestrate: bool = True
+
     # App
     app_env: str = "development"
     log_level: str = "INFO"

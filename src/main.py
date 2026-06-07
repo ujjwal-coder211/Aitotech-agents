@@ -343,6 +343,68 @@ def orchestrator_tick() -> dict[str, int]:
     return {"processed": count}
 
 
+# --------------------------------------------------------------------------
+# Auto-orchestrator: company ko "running mode" me rakho (background scheduler)
+# --------------------------------------------------------------------------
+_scheduler = None
+
+
+def _auto_tick() -> None:
+    """Background job — pending tasks process karo (best-effort)।"""
+    try:
+        run_once()
+    except Exception:  # noqa: BLE001 - scheduler kabhi crash na ho
+        import logging
+
+        logging.getLogger("auto-orchestrator").exception("auto tick fail")
+
+
+@app.on_event("startup")
+def _start_scheduler() -> None:
+    global _scheduler
+    if not settings.auto_orchestrate or not settings.is_supabase_configured:
+        return
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+
+        _scheduler = BackgroundScheduler(daemon=True)
+        _scheduler.add_job(
+            _auto_tick,
+            "interval",
+            seconds=max(5, settings.orchestrator_poll_interval),
+            id="auto_orchestrator",
+            max_instances=1,
+            coalesce=True,
+        )
+        _scheduler.start()
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("auto-orchestrator").exception("scheduler start fail")
+
+
+@app.on_event("shutdown")
+def _stop_scheduler() -> None:
+    global _scheduler
+    if _scheduler is not None:
+        try:
+            _scheduler.shutdown(wait=False)
+        except Exception:  # noqa: BLE001
+            pass
+        _scheduler = None
+
+
+@app.get("/orchestrator/status")
+def orchestrator_status() -> dict[str, Any]:
+    """Company running mode status."""
+    running = bool(_scheduler and getattr(_scheduler, "running", False))
+    return {
+        "auto_orchestrate": settings.auto_orchestrate,
+        "running": running,
+        "poll_interval_sec": settings.orchestrator_poll_interval,
+    }
+
+
 def _require_db() -> None:
     if not settings.is_supabase_configured:
         raise HTTPException(
