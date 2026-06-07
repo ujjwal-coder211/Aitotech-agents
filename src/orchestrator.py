@@ -19,11 +19,13 @@ import logging
 import time
 from typing import Any
 
+from . import memory, sayra
 from .agents import get_agent
 from .config import settings
 from .database import (
     claim_task,
     complete_task,
+    create_advice_request,
     create_task,
     fail_task,
     fetch_pending_tasks,
@@ -93,6 +95,84 @@ def _spawn_next_tasks(
     return created
 
 
+def _raise_advice_request(task: dict[str, Any], agent: Any, result: dict[str, Any]) -> None:
+    """Sayra ke through insaan se advice maango (review gate par)।"""
+    try:
+        req = sayra.build_advice_request(
+            agent.name, agent.role, task, result.get("output", "")
+        )
+        rec = create_advice_request(req)
+        if rec:
+            result["advice_request_id"] = rec["id"]
+    except Exception:  # noqa: BLE001
+        logger.exception("Task %s: advice request banane me fail", task.get("id"))
+
+
+def resume_after_advice(
+    advice: dict[str, Any], decision: str, response_text: str
+) -> list[str]:
+    """Aapki advice aane ke baad pipeline aage badhao (human -> agents)।
+
+    - advice ko shared memory me likho taaki sab agents use dekh sakein
+    - approve/revise par gated agent ke next_agents ke liye naye tasks banao
+      (aapki advice payload + memory me carry hoti hai)
+    - reject par pipeline yahin ruk jaata hai
+    """
+    pipeline_id = advice.get("pipeline_id")
+    agent_name = advice.get("agent")
+    task_id = advice.get("task_id")
+
+    # 1. Aapki advice shared memory me — sab agents ke liye
+    if response_text:
+        memory.remember(
+            "human_advice",
+            f"Boss ki advice ({decision})",
+            response_text,
+            tags=[str(pipeline_id)] if pipeline_id else [],
+            task_id=task_id,
+            agent="human",
+        )
+
+    d = (decision or "").lower()
+    if "reject" in d:
+        logger.info("Advice: REJECT — pipeline %s yahin rukega", pipeline_id)
+        return []
+
+    # 2. Gated agent ke aage ke agents ko chalao, advice carry karte hue
+    from .database import get_task
+
+    if not (agent_name and task_id):
+        return []
+    orig = get_task(task_id)
+    if orig is None:
+        return []
+    payload = orig.get("payload", {}) or {}
+    payload["human_advice"] = response_text
+    orig["payload"] = payload
+
+    try:
+        agent = get_agent(agent_name)
+    except ValueError:
+        return []
+
+    faux_result = {"output": advice.get("context", "")}
+    specs = agent.next_tasks(orig, faux_result)
+    created: list[str] = []
+    for spec in specs:
+        # advice ko har aage wale task ke payload me bhi daalo
+        spec.setdefault("payload", {})["human_advice"] = response_text
+        new_task = create_task(
+            title=spec["title"],
+            agent_type=spec["agent_type"],
+            payload=spec["payload"],
+            priority=spec.get("priority", 0),
+        )
+        if new_task:
+            created.append(new_task["id"])
+    logger.info("Advice: %s — pipeline %s aage badha (%d tasks)", decision, pipeline_id, len(created))
+    return created
+
+
 def process_task(task: dict[str, Any]) -> None:
     """एक task को claim करके उसके agent पर चलाओ।"""
     task_id = task["id"]
@@ -121,18 +201,30 @@ def process_task(task: dict[str, Any]) -> None:
         dispatched = _dispatch_actions(task_id, agent, task, result)
         if dispatched:
             result["dispatched_actions"] = dispatched
-        # pipeline: agle agents ke liye naye tasks banao (connected swarm)
-        spawned = _spawn_next_tasks(task_id, agent, task, result)
-        if spawned:
-            result["next_task_ids"] = spawned
-        complete_task(task_id, result)
-        logger.info(
-            "✔ Task %s completed by '%s' (chained %d)",
-            task_id,
-            agent_type,
-            len(spawned),
-        )
-        log_event(task_id, agent_type, "Completed successfully")
+        # review_gate: pipeline yahan rukegi, Sayra insaan se advice maangegi
+        if getattr(agent, "review_gate", False):
+            _raise_advice_request(task, agent, result)
+            result["awaiting_human"] = True
+            complete_task(task_id, result)
+            logger.info(
+                "⏸ Task %s done by '%s' — Sayra ne advice maangi (gate)",
+                task_id,
+                agent_type,
+            )
+            log_event(task_id, agent_type, "Completed — awaiting human advice")
+        else:
+            # pipeline: agle agents ke liye naye tasks banao (connected swarm)
+            spawned = _spawn_next_tasks(task_id, agent, task, result)
+            if spawned:
+                result["next_task_ids"] = spawned
+            complete_task(task_id, result)
+            logger.info(
+                "✔ Task %s completed by '%s' (chained %d)",
+                task_id,
+                agent_type,
+                len(spawned),
+            )
+            log_event(task_id, agent_type, "Completed successfully")
     except Exception as exc:  # noqa: BLE001 - एक task fail होने से loop न रुके
         logger.exception("x Task %s failed", task_id)
         fail_task(task_id, str(exc))

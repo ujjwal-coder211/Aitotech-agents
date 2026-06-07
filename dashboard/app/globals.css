@@ -289,3 +289,109 @@ button.ghost {
   gap: 8px;
   align-items: center;
 }
+
+/* ── Sayra advice inbox ── */
+.panel.sayra {
+  border-color: rgba(155, 109, 255, 0.5);
+  background: linear-gradient(180deg, rgba(155, 109, 255, 0.08), var(--panel));
+  margin-bottom: 22px;
+}
+
+.advice {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.advice-q {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.advice-ctx {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: auto;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.advice-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.advice-actions button {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+/* ── Workflow timeline ── */
+.pipeline {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.pipeline-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.flow-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  text-transform: capitalize;
+}
+.chip.pending {
+  color: var(--pending);
+  border-color: rgba(240, 180, 41, 0.4);
+}
+.chip.in_progress {
+  color: var(--in_progress);
+  border-color: rgba(59, 157, 255, 0.5);
+  background: rgba(59, 157, 255, 0.1);
+}
+.chip.completed {
+  color: var(--completed);
+  border-color: rgba(46, 204, 113, 0.5);
+  background: rgba(46, 204, 113, 0.1);
+}
+.chip.failed {
+  color: var(--failed);
+  border-color: rgba(255, 92, 92, 0.5);
+}
+
+.arrow {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 2px;
+}

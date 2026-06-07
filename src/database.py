@@ -24,6 +24,8 @@ LEADS_TABLE = "leads"
 SERVICES_TABLE = "services"
 OPPORTUNITIES_TABLE = "opportunities"
 MEMORY_TABLE = "company_memory"
+ADVICE_TABLE = "advice_requests"
+DEALS_TABLE = "deals"
 
 
 @lru_cache
@@ -136,6 +138,12 @@ def list_tasks(status: str | None = None, limit: int = 100) -> list[dict[str, An
     return response.data or []
 
 
+def get_task(task_id: str) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(TASKS_TABLE).select("*").eq("id", task_id).limit(1).execute()
+    return response.data[0] if response.data else None
+
+
 # --------------------------------------------------------------------------
 # Agent + log helpers
 # --------------------------------------------------------------------------
@@ -218,6 +226,146 @@ def list_memory(
         query = query.contains("tags", tags)
     response = query.order("created_at", desc=True).limit(limit).execute()
     return response.data or []
+
+
+# --------------------------------------------------------------------------
+# Human-in-the-loop: advice_requests (Sayra <-> aap)
+# --------------------------------------------------------------------------
+def create_advice_request(fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(ADVICE_TABLE).insert(fields).execute()
+    return response.data[0] if response.data else None
+
+
+def list_advice_requests(
+    status: str | None = None, limit: int = 50
+) -> list[dict[str, Any]]:
+    client = get_client()
+    query = client.table(ADVICE_TABLE).select("*")
+    if status:
+        query = query.eq("status", status)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return response.data or []
+
+
+def get_advice_request(advice_id: str) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(ADVICE_TABLE).select("*").eq("id", advice_id).limit(1).execute()
+    return response.data[0] if response.data else None
+
+
+def answer_advice_request(
+    advice_id: str, decision: str, response_text: str
+) -> dict[str, Any] | None:
+    """Aapki advice save karo aur request ko 'answered' mark karo."""
+    client = get_client()
+    from datetime import datetime, timezone
+
+    res = (
+        client.table(ADVICE_TABLE)
+        .update(
+            {
+                "status": "answered",
+                "decision": decision,
+                "response": response_text,
+                "answered_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", advice_id)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
+# --------------------------------------------------------------------------
+# Deals + finance (paisa tracking: projected vs actual)
+# --------------------------------------------------------------------------
+def create_deal(fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(DEALS_TABLE).insert(fields).execute()
+    return response.data[0] if response.data else None
+
+
+def update_deal(deal_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+    client = get_client()
+    response = client.table(DEALS_TABLE).update(fields).eq("id", deal_id).execute()
+    return response.data[0] if response.data else None
+
+
+def list_deals(status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    client = get_client()
+    query = client.table(DEALS_TABLE).select("*")
+    if status:
+        query = query.eq("status", status)
+    response = query.order("created_at", desc=True).limit(limit).execute()
+    return response.data or []
+
+
+def finance_summary() -> dict[str, Any]:
+    """Sab deals jodkar projected + actual profit nikaalo."""
+    deals = list_deals(limit=1000)
+
+    def _num(v: Any) -> float:
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    proj_rev = sum(_num(d.get("projected_revenue")) for d in deals)
+    proj_cost = sum(_num(d.get("projected_cost")) for d in deals)
+    act_rev = sum(_num(d.get("actual_revenue")) for d in deals)
+    act_cost = sum(_num(d.get("actual_cost")) for d in deals)
+    won = sum(1 for d in deals if d.get("status") == "won")
+    return {
+        "currency": deals[0].get("currency", "INR") if deals else "INR",
+        "deal_count": len(deals),
+        "won_count": won,
+        "projected_revenue": proj_rev,
+        "projected_cost": proj_cost,
+        "projected_profit": proj_rev - proj_cost,
+        "actual_revenue": act_rev,
+        "actual_cost": act_cost,
+        "actual_profit": act_rev - act_cost,
+    }
+
+
+# --------------------------------------------------------------------------
+# Pipelines (workflow view: tasks grouped by pipeline_id)
+# --------------------------------------------------------------------------
+def list_pipelines(limit_tasks: int = 500) -> list[dict[str, Any]]:
+    """Tasks ko pipeline_id se group karke workflow timeline banao."""
+    client = get_client()
+    response = (
+        client.table(TASKS_TABLE)
+        .select("*")
+        .order("created_at", desc=False)
+        .limit(limit_tasks)
+        .execute()
+    )
+    tasks = response.data or []
+    groups: dict[str, dict[str, Any]] = {}
+    for t in tasks:
+        pid = t.get("pipeline_id") or t.get("id")
+        payload = t.get("payload") or {}
+        g = groups.setdefault(
+            pid,
+            {
+                "pipeline_id": pid,
+                "title": payload.get("pipeline_title") or t.get("title"),
+                "created_at": t.get("created_at"),
+                "steps": [],
+            },
+        )
+        g["steps"].append(
+            {
+                "task_id": t.get("id"),
+                "agent_type": t.get("agent_type"),
+                "status": t.get("status"),
+                "created_at": t.get("created_at"),
+            }
+        )
+    # newest pipelines first
+    return sorted(groups.values(), key=lambda g: g["created_at"] or "", reverse=True)
 
 
 def log_event(task_id: str, agent_name: str, message: str, level: str = "info") -> None:

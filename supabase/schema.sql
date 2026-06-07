@@ -157,6 +157,56 @@ create index if not exists memory_tags_idx     on public.company_memory using gi
 create index if not exists memory_created_idx  on public.company_memory (created_at desc);
 
 -- ------------------------------------------------------------
+-- advice_requests: human-in-the-loop — Sayra puchhti hai, aap advice dete ho
+-- agent kisi decision par atke -> yahan request banti hai -> aap reply -> agents aage
+-- ------------------------------------------------------------
+create table if not exists public.advice_requests (
+    id           uuid primary key default gen_random_uuid(),
+    task_id      uuid references public.tasks(id) on delete set null,
+    pipeline_id  uuid,
+    agent        text,                          -- kis agent ne maanga
+    question     text not null,                 -- Sayra -> aap (advice maang)
+    context      text,                          -- agent ka output snippet
+    options      text[] not null default '{}',  -- suggested choices
+    status       text not null default 'pending', -- pending|answered
+    decision     text,                          -- aapka choice (approve/reject/revise)
+    response     text,                          -- aapki free-text advice
+    created_at   timestamptz not null default now(),
+    answered_at  timestamptz
+);
+
+create index if not exists advice_status_idx   on public.advice_requests (status);
+create index if not exists advice_pipeline_idx  on public.advice_requests (pipeline_id);
+create index if not exists advice_created_idx   on public.advice_requests (created_at desc);
+
+-- ------------------------------------------------------------
+-- deals: paisa tracking — projected (agent) + actual (aap), profit dashboard
+-- ------------------------------------------------------------
+create table if not exists public.deals (
+    id                 uuid primary key default gen_random_uuid(),
+    title              text not null,
+    opportunity_id     uuid references public.opportunities(id) on delete set null,
+    pipeline_id        uuid,
+    currency           text not null default 'INR',
+    projected_revenue  numeric not null default 0,   -- agent/aap ka estimate
+    projected_cost     numeric not null default 0,
+    actual_revenue     numeric not null default 0,    -- jab paisa aaye
+    actual_cost        numeric not null default 0,
+    status             text not null default 'open',  -- open|won|lost|delivered
+    notes              text,
+    created_at         timestamptz not null default now(),
+    updated_at         timestamptz not null default now()
+);
+
+create index if not exists deals_status_idx  on public.deals (status);
+create index if not exists deals_created_idx  on public.deals (created_at desc);
+
+drop trigger if exists trg_deals_updated_at on public.deals;
+create trigger trg_deals_updated_at
+    before update on public.deals
+    for each row execute function public.set_updated_at();
+
+-- ------------------------------------------------------------
 -- Seed: Aitotech की sample services (अपने हिसाब से edit करें)
 -- ------------------------------------------------------------
 insert into public.services (slug, name, description, price, sort_order) values

@@ -21,6 +21,8 @@ class OpportunityAgent(BaseAgent):
     role = "Business Opportunity & Monetization Analyst"
     memory_kind = "opportunity"
     next_agents = ["strategy"]
+    # Paisa-decision important hai — yahan Sayra aapse go/no-go + advice maangti hai
+    review_gate = True
     system_prompt = (
         "You are the Business Opportunity Agent. Your job is NOT generic research — "
         "you find concrete MONEY-MAKING opportunities for AitoTech.\n\n"

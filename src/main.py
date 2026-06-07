@@ -190,6 +190,114 @@ def start_pipeline(req: PipelineRequest) -> dict[str, Any]:
     }
 
 
+@app.get("/pipelines")
+def get_pipelines() -> list[dict[str, Any]]:
+    """Workflow view — tasks ko pipeline ke hisaab se group karke timeline."""
+    _require_db()
+    return db.list_pipelines()
+
+
+# --------------------------------------------------------------------------
+# Human-in-the-loop: Sayra advice inbox
+# --------------------------------------------------------------------------
+@app.get("/advice")
+def get_advice(status: str | None = "pending", limit: int = 50) -> list[dict[str, Any]]:
+    """Sayra ke advice requests — jahan aapki zaroorat hai."""
+    _require_db()
+    return db.list_advice_requests(status=status, limit=limit)
+
+
+class AdviceAnswerRequest(BaseModel):
+    decision: str = Field(..., examples=["Approve & continue", "Reject", "Revise with my advice"])
+    response: str = Field(default="", description="Aapki free-text advice agents ke liye")
+
+
+@app.post("/advice/{advice_id}/answer")
+def answer_advice(advice_id: str, req: AdviceAnswerRequest) -> dict[str, Any]:
+    """Aapki advice/decision — yeh agents tak jaati hai aur pipeline aage badhti hai."""
+    _require_db()
+    advice = db.get_advice_request(advice_id)
+    if advice is None:
+        raise HTTPException(status_code=404, detail="Advice request nahi mili.")
+    if advice.get("status") == "answered":
+        raise HTTPException(status_code=409, detail="Is request ka jawab pehle de diya gaya.")
+
+    db.answer_advice_request(advice_id, req.decision, req.response)
+    # human -> agents: advice ko memory me daalo + pipeline aage badhao
+    from .orchestrator import resume_after_advice
+
+    spawned = resume_after_advice(advice, req.decision, req.response)
+    return {
+        "ok": True,
+        "decision": req.decision,
+        "resumed_tasks": spawned,
+        "message": (
+            "Advice agents tak pahunch gayi — pipeline aage badh rahi hai."
+            if spawned
+            else "Advice save ho gayi (pipeline aage nahi badhi / reject)."
+        ),
+    }
+
+
+# --------------------------------------------------------------------------
+# Deals + finance (profit tracking)
+# --------------------------------------------------------------------------
+class DealRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    opportunity_id: str | None = None
+    pipeline_id: str | None = None
+    currency: str = "INR"
+    projected_revenue: float = 0
+    projected_cost: float = 0
+    actual_revenue: float = 0
+    actual_cost: float = 0
+    status: str = "open"
+    notes: str | None = None
+
+
+class DealUpdateRequest(BaseModel):
+    projected_revenue: float | None = None
+    projected_cost: float | None = None
+    actual_revenue: float | None = None
+    actual_cost: float | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+@app.get("/deals")
+def get_deals(status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    _require_db()
+    return db.list_deals(status=status, limit=limit)
+
+
+@app.post("/deals", status_code=201)
+def post_deal(req: DealRequest) -> dict[str, Any]:
+    _require_db()
+    deal = db.create_deal(req.model_dump(exclude_none=True))
+    if deal is None:
+        raise HTTPException(status_code=500, detail="Deal create nahi hua.")
+    return deal
+
+
+@app.patch("/deals/{deal_id}")
+def patch_deal(deal_id: str, req: DealUpdateRequest) -> dict[str, Any]:
+    _require_db()
+    fields = req.model_dump(exclude_none=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="Update ke liye kuch nahi diya.")
+    deal = db.update_deal(deal_id, fields)
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Deal nahi mila.")
+    return deal
+
+
+@app.get("/finance/summary")
+def get_finance_summary() -> dict[str, Any]:
+    """Kul projected + actual profit (dashboard profit card)."""
+    _require_db()
+    return db.finance_summary()
+
+
 class N8nEventRequest(BaseModel):
     """ai-engine (n8n) से inbound event — एक नया task बनाता है।"""
 

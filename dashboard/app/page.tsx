@@ -1,41 +1,73 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type AgentInfo, type Lead, type RootInfo, type Task } from "../lib/api";
+import {
+  api,
+  type AdviceRequest,
+  type AgentInfo,
+  type Deal,
+  type FinanceSummary,
+  type Lead,
+  type Pipeline,
+  type RootInfo,
+  type Task,
+} from "../lib/api";
 
 const STATUSES = ["pending", "in_progress", "completed", "failed"] as const;
+
+function money(n: number, currency = "INR") {
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(n || 0);
+  } catch {
+    return `${n}`;
+  }
+}
 
 export default function Dashboard() {
   const [info, setInfo] = useState<RootInfo | null>(null);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [advice, setAdvice] = useState<AdviceRequest[]>([]);
+  const [finance, setFinance] = useState<FinanceSummary | null>(null);
+  const [deals, setDeals] = useState<Deal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  // create-task form state
-  const [title, setTitle] = useState("");
-  const [agentType, setAgentType] = useState("research");
-  const [priority, setPriority] = useState(0);
-  const [payload, setPayload] = useState("");
+  // start-pipeline form
+  const [ppTitle, setPpTitle] = useState("");
+  const [ppMarket, setPpMarket] = useState("");
+  const [ppRegion, setPpRegion] = useState("India");
+
+  // advice answer text per request id
+  const [adviceText, setAdviceText] = useState<Record<string, string>>({});
+
+  // add-deal form
+  const [dealTitle, setDealTitle] = useState("");
+  const [dealRev, setDealRev] = useState(0);
+  const [dealCost, setDealCost] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
-      const [i, a, t] = await Promise.all([
-        api.info(),
-        api.agents(),
-        api.tasks(),
-      ]);
+      const [i, a, t] = await Promise.all([api.info(), api.agents(), api.tasks()]);
       setInfo(i);
       setAgents(a.registry);
       setTasks(t);
-      // leads optional है (table न हो तो fail हो सकता है) — चुपचाप ignore
+      // optional tables — table na ho to chup-chaap ignore
       api.leads().then(setLeads).catch(() => setLeads([]));
-      if (a.registry[0]) setAgentType((prev) => prev || a.registry[0].agent_type);
+      api.pipelines().then(setPipelines).catch(() => setPipelines([]));
+      api.advice("pending").then(setAdvice).catch(() => setAdvice([]));
+      api.finance().then(setFinance).catch(() => setFinance(null));
+      api.deals().then(setDeals).catch(() => setDeals([]));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Backend से connect नहीं हो पाया।");
+      setError(e instanceof Error ? e.message : "Backend se connect nahi hua.");
     } finally {
       setLoading(false);
     }
@@ -43,7 +75,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     refresh();
-    const id = setInterval(refresh, 5000); // हर 5s auto-refresh
+    const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, [refresh]);
 
@@ -54,67 +86,68 @@ export default function Dashboard() {
     return by;
   }, [tasks]);
 
-  async function handleCreate(e: React.FormEvent) {
+  async function guarded(fn: () => Promise<void>, errMsg: string) {
+    setBusy(true);
+    try {
+      await fn();
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : errMsg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const handleTick = () => guarded(() => api.tick().then(() => {}), "Orchestrator tick fail.");
+  const handleRun = (id: string) =>
+    guarded(() => api.runTask(id).then(() => {}), "Task run fail.");
+
+  const handleStartPipeline = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
-    setBusy(true);
-    try {
-      let parsed: Record<string, unknown> = {};
-      if (payload.trim()) {
-        try {
-          parsed = JSON.parse(payload);
-        } catch {
-          throw new Error("Payload valid JSON नहीं है।");
-        }
-      }
-      await api.createTask({
-        title: title.trim(),
-        agent_type: agentType,
-        priority,
-        payload: parsed,
+    if (!ppTitle.trim()) return;
+    return guarded(async () => {
+      await api.startPipeline({
+        title: ppTitle.trim(),
+        start_agent: "research",
+        market: ppMarket || undefined,
+        region: ppRegion || undefined,
+        priority: 7,
       });
-      setTitle("");
-      setPayload("");
-      setPriority(0);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Task बना नहीं।");
-    } finally {
-      setBusy(false);
-    }
-  }
+      setPpTitle("");
+      setPpMarket("");
+    }, "Pipeline start nahi hua.");
+  };
 
-  async function handleTick() {
-    setBusy(true);
-    try {
-      await api.tick();
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Orchestrator tick fail।");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const handleAnswer = (a: AdviceRequest, decision: string) =>
+    guarded(async () => {
+      await api.answerAdvice(a.id, decision, adviceText[a.id] || "");
+      setAdviceText((p) => ({ ...p, [a.id]: "" }));
+    }, "Advice bhejne me dikkat.");
 
-  async function handleRun(id: string) {
-    setBusy(true);
-    try {
-      await api.runTask(id);
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Task run fail।");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const handleAddDeal = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dealTitle.trim()) return;
+    return guarded(async () => {
+      await api.createDeal({
+        title: dealTitle.trim(),
+        projected_revenue: dealRev,
+        projected_cost: dealCost,
+      });
+      setDealTitle("");
+      setDealRev(0);
+      setDealCost(0);
+    }, "Deal add nahi hua.");
+  };
+
+  const cur = finance?.currency || "INR";
 
   return (
     <div className="container">
       <div className="header">
         <div>
-          <h1>AI Enterprise Dashboard</h1>
+          <h1>AitoTech Command Center</h1>
           <div className="subtitle">
-            Tasks और agents को monitor + trigger करने का control panel
+            Workflow, profit aur Sayra ki advice — ek hi jagah
           </div>
         </div>
         <div className="toolbar">
@@ -136,34 +169,106 @@ export default function Dashboard() {
 
       {error && <div className="error-banner">⚠ {error}</div>}
 
+      {/* ── Sayra advice inbox (jahan aapki zaroorat hai) ── */}
+      {advice.length > 0 && (
+        <div className="panel sayra">
+          <h2>💬 Sayra ko aapki advice chahiye ({advice.length})</h2>
+          {advice.map((a) => (
+            <div className="advice" key={a.id}>
+              <div className="advice-q">{a.question}</div>
+              {a.context && <div className="advice-ctx">{a.context.slice(0, 600)}…</div>}
+              <textarea
+                placeholder="Aapki advice / instruction agents ke liye (optional)…"
+                value={adviceText[a.id] || ""}
+                onChange={(e) =>
+                  setAdviceText((p) => ({ ...p, [a.id]: e.target.value }))
+                }
+              />
+              <div className="advice-actions">
+                {(a.options.length ? a.options : ["Approve & continue", "Reject"]).map(
+                  (opt) => (
+                    <button
+                      key={opt}
+                      className={opt.toLowerCase().includes("reject") ? "ghost" : ""}
+                      onClick={() => handleAnswer(a, opt)}
+                      disabled={busy}
+                    >
+                      {opt}
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Profit cards (projected + actual) ── */}
       <div className="stats">
         <div className="stat-card">
-          <div className="label">Total tasks</div>
-          <div className="value">{tasks.length}</div>
-        </div>
-        {STATUSES.map((s) => (
-          <div className="stat-card" key={s}>
-            <div className="label">{s.replace("_", " ")}</div>
-            <div className="value" style={{ color: `var(--${s})` }}>
-              {stats[s] || 0}
-            </div>
+          <div className="label">Projected profit</div>
+          <div className="value" style={{ color: "var(--accent)" }}>
+            {money(finance?.projected_profit || 0, cur)}
           </div>
-        ))}
+        </div>
+        <div className="stat-card">
+          <div className="label">Actual profit</div>
+          <div className="value" style={{ color: "var(--completed)" }}>
+            {money(finance?.actual_profit || 0, cur)}
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Actual revenue</div>
+          <div className="value">{money(finance?.actual_revenue || 0, cur)}</div>
+        </div>
+        <div className="stat-card">
+          <div className="label">Deals (won)</div>
+          <div className="value">
+            {finance?.deal_count || 0}{" "}
+            <span style={{ fontSize: 14, color: "var(--muted)" }}>
+              ({finance?.won_count || 0} won)
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Workflow timeline (pipelines) ── */}
+      <div className="panel" style={{ marginBottom: 20 }}>
+        <h2>
+          🔄 Workflow — agent pipelines
+          <button className="ghost" onClick={refresh} disabled={busy}>
+            ↻ Refresh
+          </button>
+        </h2>
+        {pipelines.length === 0 ? (
+          <div className="empty">Abhi koi pipeline nahi. Neeche se ek shuru karein →</div>
+        ) : (
+          pipelines.slice(0, 8).map((p) => (
+            <div className="pipeline" key={p.pipeline_id}>
+              <div className="pipeline-title">{p.title}</div>
+              <div className="flow">
+                {p.steps.map((s, i) => (
+                  <span key={s.task_id} className="flow-step">
+                    <span className={`chip ${s.status}`} title={s.status}>
+                      {s.agent_type}
+                    </span>
+                    {i < p.steps.length - 1 && <span className="arrow">→</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       <div className="grid">
         {/* Tasks list */}
         <div className="panel">
-          <h2>
-            Tasks
-            <button className="ghost" onClick={refresh} disabled={busy}>
-              ↻ Refresh
-            </button>
-          </h2>
+          <h2>Tasks</h2>
           {loading ? (
             <div className="empty">Loading…</div>
           ) : tasks.length === 0 ? (
-            <div className="empty">अभी कोई task नहीं है। नीचे से नया बनाएँ →</div>
+            <div className="empty">Abhi koi task nahi. Side se pipeline shuru karein →</div>
           ) : (
             tasks.map((t) => (
               <div className="task" key={t.id}>
@@ -178,11 +283,7 @@ export default function Dashboard() {
                 </div>
                 {t.status === "pending" && (
                   <div style={{ marginTop: 10 }}>
-                    <button
-                      className="ghost"
-                      onClick={() => handleRun(t.id)}
-                      disabled={busy}
-                    >
+                    <button className="ghost" onClick={() => handleRun(t.id)} disabled={busy}>
                       ▶ Run now
                     </button>
                   </div>
@@ -202,55 +303,91 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Sidebar: create + agents */}
+        {/* Sidebar */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div className="panel">
-            <h2>नया Task बनाएँ</h2>
-            <form className="create" onSubmit={handleCreate}>
+            <h2>🚀 Naya pipeline shuru karein</h2>
+            <form className="create" onSubmit={handleStartPipeline}>
               <div>
-                <label>Title</label>
+                <label>Idea / market</label>
                 <input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="जैसे: AI tutoring app के लिए market research"
+                  value={ppTitle}
+                  onChange={(e) => setPpTitle(e.target.value)}
+                  placeholder="jaise: SMB manufacturers ke liye invoice automation"
                   required
                 />
               </div>
               <div>
-                <label>Agent</label>
-                <select
-                  value={agentType}
-                  onChange={(e) => setAgentType(e.target.value)}
-                >
-                  {agents.map((a) => (
-                    <option key={a.agent_type} value={a.agent_type}>
-                      {a.agent_type} — {a.role}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label>Priority (0-10)</label>
+                <label>Market (optional)</label>
                 <input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={priority}
-                  onChange={(e) => setPriority(Number(e.target.value))}
+                  value={ppMarket}
+                  onChange={(e) => setPpMarket(e.target.value)}
+                  placeholder="manufacturing / fintech / healthcare"
                 />
               </div>
               <div>
-                <label>Payload (JSON, optional)</label>
-                <textarea
-                  value={payload}
-                  onChange={(e) => setPayload(e.target.value)}
-                  placeholder='{"region": "India"}'
-                />
+                <label>Region</label>
+                <input value={ppRegion} onChange={(e) => setPpRegion(e.target.value)} />
               </div>
-              <button type="submit" disabled={busy || !title.trim()}>
-                + Create task
+              <button type="submit" disabled={busy || !ppTitle.trim()}>
+                + Start pipeline (research → … → sales)
               </button>
             </form>
+          </div>
+
+          <div className="panel">
+            <h2>💰 Deals (profit tracking)</h2>
+            <form className="create" onSubmit={handleAddDeal}>
+              <div>
+                <label>Deal title</label>
+                <input
+                  value={dealTitle}
+                  onChange={(e) => setDealTitle(e.target.value)}
+                  placeholder="Acme Pvt Ltd — invoice automation"
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label>Projected revenue</label>
+                  <input
+                    type="number"
+                    value={dealRev}
+                    onChange={(e) => setDealRev(Number(e.target.value))}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label>Projected cost</label>
+                  <input
+                    type="number"
+                    value={dealCost}
+                    onChange={(e) => setDealCost(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+              <button type="submit" disabled={busy || !dealTitle.trim()}>
+                + Add deal
+              </button>
+            </form>
+            <div style={{ marginTop: 12 }}>
+              {deals.length === 0 ? (
+                <div className="empty">Abhi koi deal nahi.</div>
+              ) : (
+                deals.slice(0, 6).map((d) => (
+                  <div className="agent-row" key={d.id}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{d.title}</div>
+                      <div className="role">
+                        proj {money(d.projected_revenue - d.projected_cost, d.currency)} ·
+                        actual {money(d.actual_revenue - d.actual_cost, d.currency)}
+                      </div>
+                    </div>
+                    <span className={`badge ${d.status === "won" ? "completed" : "pending"}`}>
+                      {d.status}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
 
           <div className="panel">
@@ -270,7 +407,7 @@ export default function Dashboard() {
           <div className="panel">
             <h2>Website Leads ({leads.length})</h2>
             {leads.length === 0 ? (
-              <div className="empty">अभी कोई lead नहीं — Aitotech connect करें।</div>
+              <div className="empty">Abhi koi lead nahi — Aitotech connect karein.</div>
             ) : (
               leads.slice(0, 8).map((l) => (
                 <div className="agent-row" key={l.id}>

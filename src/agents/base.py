@@ -32,6 +32,10 @@ class BaseAgent(ABC):
     # Pipeline: yeh agent complete hone par kin agents ke liye naya task banega
     next_agents: list[str] = []
 
+    # review_gate=True => is agent ke baad pipeline rukti hai aur Sayra insaan se
+    # advice maangti hai. Aapke jawab ke baad hi agle agents chalte hain.
+    review_gate: bool = False
+
     # Shared memory me yeh output kis 'kind' se save hoga
     memory_kind: str = "note"
 
@@ -109,6 +113,12 @@ class BaseAgent(ABC):
     def _build_prompt(self, title: str, payload: dict[str, Any]) -> str:
         """Task se LLM prompt banao. Subclass tweak kar sakta hai."""
         lines = [f"Task: {title}"]
+        # Boss (human) ki advice — sabse zyada weight do
+        if payload.get("human_advice"):
+            lines.append(
+                "\nIMPORTANT — follow the boss's advice/decision:\n"
+                f"{payload['human_advice']}"
+            )
         # Pichhle agent ka output (chaining) — sabse important context
         if payload.get("from_output"):
             frm = payload.get("from_agent", "previous agent")
@@ -120,6 +130,7 @@ class BaseAgent(ABC):
             not in {
                 "from_output",
                 "from_agent",
+                "human_advice",
                 "pipeline_id",
                 "pipeline_title",
                 "pipeline_depth",

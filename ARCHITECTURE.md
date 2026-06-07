@@ -54,6 +54,30 @@ POST /pipeline   { "title": "...", "start_agent": "research", "market": "...", "
 POST /orchestrator/tick     # agents ko chalao (ya APScheduler/cron se auto)
 GET  /memory?tag=<pipeline_id>   # swarm ne kya kya socha
 GET  /opportunities              # paisa-banane wale findings
+GET  /pipelines                  # workflow timeline (tasks grouped by pipeline)
+```
+
+### Human-in-the-loop (Sayra advisor)
+
+Kuch agents par `review_gate = True` hota hai (abhi `opportunity`). Aise agent ke
+baad pipeline **rukti hai** aur ek `advice_request` banta hai — Sayra aapse go/no-go
++ advice maangti hai. Aapka jawab (`POST /advice/{id}/answer`) shared memory me
+jaata hai aur pipeline aapki advice ke saath aage badhti hai (human → agents).
+
+```
+GET  /advice?status=pending          # jahan aapki zaroorat hai
+POST /advice/{id}/answer  { "decision": "Approve & continue", "response": "Focus on fintech SMBs" }
+```
+
+### Profit tracking
+
+`deals` table me projected (agent/aap ka estimate) + actual (jab paisa aaye) dono.
+Dashboard profit card `/finance/summary` se aata hai.
+
+```
+POST /deals   { "title": "...", "projected_revenue": 100000, "projected_cost": 30000 }
+PATCH /deals/{id}  { "actual_revenue": 80000, "actual_cost": 25000, "status": "won" }
+GET  /finance/summary
 ```
 
 ---
