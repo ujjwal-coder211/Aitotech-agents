@@ -394,6 +394,37 @@ def _stop_scheduler() -> None:
         _scheduler = None
 
 
+@app.get("/debug/db")
+def debug_db() -> dict[str, Any]:
+    """DB connection ka asli error reveal karta hai (auth/table/etc.)।
+
+    500 ke peeche ki असली wajah pakadne ke liye — production me bhi safe
+    (sirf error message return karta hai, koi secret nahi)।
+    """
+    out: dict[str, Any] = {
+        "supabase_url_set": bool(settings.supabase_url),
+        "supabase_key_set": bool(settings.supabase_key),
+        "key_prefix": (settings.supabase_key or "")[:8],
+        "key_len": len(settings.supabase_key or ""),
+    }
+    try:
+        client = db.get_client()
+    except Exception as exc:  # noqa: BLE001
+        out["stage"] = "create_client"
+        out["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+        return out
+    try:
+        res = client.table("tasks").select("id").limit(1).execute()
+        out["stage"] = "query_ok"
+        out["rows"] = len(res.data or [])
+        out["ok"] = True
+    except Exception as exc:  # noqa: BLE001
+        out["stage"] = "query"
+        out["ok"] = False
+        out["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+    return out
+
+
 @app.get("/orchestrator/status")
 def orchestrator_status() -> dict[str, Any]:
     """Company running mode status."""
