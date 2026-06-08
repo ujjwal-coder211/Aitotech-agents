@@ -48,7 +48,13 @@ class Settings(BaseSettings):
     razorpay_webhook_secret: str = ""
     payment_currency: str = "INR"
 
-    # App
+    # Google Places — real businesses (scout agent)
+    google_places_api_key: str = ""
+    places_max_results: int = 10
+    places_email_lookup: bool = True  # website se email nikalna
+
+    # Real outreach — sales agent email auto bheje (n8n + Resend)
+    outreach_auto_send: bool = True
     app_env: str = "development"
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
@@ -86,6 +92,10 @@ class Settings(BaseSettings):
     @property
     def is_payments_configured(self) -> bool:
         return bool(self.razorpay_key_id and self.razorpay_key_secret)
+
+    @property
+    def is_places_configured(self) -> bool:
+        return bool(self.google_places_api_key)
 
     @property
     def growth_market_list(self) -> list[str]:

@@ -410,6 +410,27 @@ def count_active_pipelines() -> int:
 # --------------------------------------------------------------------------
 def create_prospect(fields: dict[str, Any]) -> dict[str, Any] | None:
     client = get_client()
+    place_id = fields.get("place_id")
+    if place_id:
+        existing = (
+            client.table(PROSPECTS_TABLE)
+            .select("*")
+            .eq("place_id", place_id)
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            row = existing.data[0]
+            upd = {k: v for k, v in fields.items() if v is not None and k != "place_id"}
+            if upd:
+                res = (
+                    client.table(PROSPECTS_TABLE)
+                    .update(upd)
+                    .eq("id", row["id"])
+                    .execute()
+                )
+                return res.data[0] if res.data else row
+            return row
     response = client.table(PROSPECTS_TABLE).insert(fields).execute()
     return response.data[0] if response.data else None
 

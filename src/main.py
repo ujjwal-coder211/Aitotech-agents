@@ -67,6 +67,8 @@ def root() -> dict[str, Any]:
         "llm_configured": settings.is_llm_configured,
         "n8n_configured": settings.is_n8n_configured,
         "payments_configured": settings.is_payments_configured,
+        "places_configured": settings.is_places_configured,
+        "outreach_auto_send": settings.outreach_auto_send,
         "auto_growth": settings.auto_growth,
         "agents": list(AGENT_REGISTRY.keys()),
     }
@@ -408,6 +410,8 @@ def growth_status() -> dict[str, Any]:
         "active_pipelines": active,
         "max_active": settings.growth_max_active_pipelines,
         "payments_configured": settings.is_payments_configured,
+        "places_configured": settings.is_places_configured,
+        "outreach_auto_send": settings.outreach_auto_send,
     }
 
 
@@ -602,6 +606,32 @@ def debug_db() -> dict[str, Any]:
         out["ok"] = False
         out["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
     return out
+
+
+@app.get("/debug/places")
+def debug_places(q: str = "dental clinic Pune", region: str = "India") -> dict[str, Any]:
+    """Google Places + email lookup test (API key verify)。"""
+    from .integrations import email_finder, google_places
+
+    if not settings.is_places_configured:
+        return {"ok": False, "error": "GOOGLE_PLACES_API_KEY set nahi hai"}
+    places = google_places.search_businesses(q, region=region, max_results=3)
+    if settings.places_email_lookup:
+        places = email_finder.enrich_places_with_email(places)
+    return {
+        "ok": True,
+        "query": q,
+        "count": len(places),
+        "places": [
+            {
+                "name": p.get("business_name"),
+                "phone": p.get("phone"),
+                "website": p.get("website"),
+                "email": p.get("contact_email"),
+            }
+            for p in places
+        ],
+    }
 
 
 @app.get("/orchestrator/status")

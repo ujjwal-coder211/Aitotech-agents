@@ -225,6 +225,7 @@ create table if not exists public.prospects (
     contact_name  text,
     contact_email text,
     contact_phone text,
+    place_id      text,                          -- Google Places id (dedup)
     profile       text,                          -- scout ka analysis (kya karte hain, pain points)
     fit_score     int,                            -- 1-10 kitne acche fit hain
     status        text not null default 'new',    -- new|analyzing|outreach|engaged|client|dead
@@ -235,6 +236,10 @@ create table if not exists public.prospects (
 
 create index if not exists prospects_status_idx  on public.prospects (status);
 create index if not exists prospects_created_idx  on public.prospects (created_at desc);
+create unique index if not exists prospects_place_id_idx on public.prospects (place_id) where place_id is not null;
+
+-- existing DBs: place_id column add
+alter table public.prospects add column if not exists place_id text;
 
 -- ------------------------------------------------------------
 -- demos: client ko dikhane se pehle demo + approval (Master + client)

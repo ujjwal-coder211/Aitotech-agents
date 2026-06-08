@@ -1,33 +1,77 @@
-"""Sales Agent - outreach, lead qualification, proposals, closing."""
+"""Sales Agent - real outreach: psychology + Google Places prospect email se bhejna."""
 
 from __future__ import annotations
 
+import logging
+import re
 from typing import Any
 
 from ..base import BaseAgent
+from ... import database as db
+from ...config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_email_draft(text: str) -> tuple[str, str]:
+    """LLM output se Subject + body nikaalo。"""
+    subject = "AitoTech — quick idea for your business"
+    body = text.strip()
+
+    subj_match = re.search(
+        r"(?im)^(?:subject|email subject)\s*[:：]\s*(.+)$", text
+    )
+    if subj_match:
+        subject = subj_match.group(1).strip().strip('"')
+
+    # Body: "Subject:" ke baad ya "## Client message" section
+    body_match = re.search(
+        r"(?is)(?:^|\n)(?:body|email body|message)\s*[:：]\s*\n(.+)$", text
+    )
+    if body_match:
+        body = body_match.group(1).strip()
+    elif subj_match:
+        idx = text.find(subj_match.group(0))
+        rest = text[idx + len(subj_match.group(0)) :].strip()
+        if rest:
+            body = rest.lstrip("\n:- ").strip()
+
+    # Agar bahut lamba playbook hai to pehla email block lo
+    first_email = re.search(
+        r"(?is)(?:first[- ]contact|cold email|email 1)[^\n]*\n+(.*?)(?:\n##|\n---|\Z)",
+        text,
+    )
+    if first_email and len(first_email.group(1)) < len(body):
+        block = first_email.group(1).strip()
+        inner_subj = re.search(r"(?im)^subject\s*[:：]\s*(.+)$", block)
+        if inner_subj:
+            subject = inner_subj.group(1).strip()
+            body = block[inner_subj.end() :].strip()
+        else:
+            body = block
+
+    if len(body) > 4000:
+        body = body[:4000] + "\n…"
+    return subject, body
 
 
 class SalesAgent(BaseAgent):
     name = "sales"
     role = "Sales & Outreach Specialist"
     memory_kind = "sales"
-    next_agents: list[str] = []  # sales is the end of the discovery pipeline
+    next_agents: list[str] = []
     system_prompt = (
-        "You are an elite B2B sales closer at AitoTech (AI Automation Agency) who uses "
-        "ethical persuasion psychology to win business owners. Using the opportunity, "
-        "strategy and prospect context provided, produce a persuasive outreach playbook:\n"
-        "- A personalised first-contact message (subject + body) that opens with THEIR "
-        "specific pain, not about us\n"
-        "- Apply persuasion principles explicitly but naturally: reciprocity (give value/insight "
-        "first), social proof, authority, scarcity/urgency, loss-aversion (cost of inaction in "
-        "₹/hours), and commitment (small yes first)\n"
-        "- A 3-step follow-up sequence (value, proof, soft deadline)\n"
-        "- Discovery questions to understand their real needs\n"
-        "- Top objections + empathetic, confident rebuttals\n"
-        "- A clear low-friction CTA (15-min demo call)\n"
-        "Tone: human, warm, confident, honest — never spammy or manipulative. The goal is the "
-        "owner says yes to a demo. When the client agrees, the fulfillment pipeline "
-        "(requirements -> demo -> payment -> delivery) takes over."
+        "You are an elite B2B sales closer at AitoTech (AI Automation Agency). You have "
+        "a REAL prospect from Google Places — use their actual business name and pain.\n\n"
+        "Output MUST include a send-ready first email with these exact lines:\n"
+        "Subject: <one compelling subject line>\n"
+        "Body:\n<personalised email under 180 words — their pain first, one clear CTA for "
+        "a 15-min demo call>\n\n"
+        "Then add:\n"
+        "- 2 short follow-up messages\n"
+        "- Top 3 objections + rebuttals\n"
+        "Use ethical persuasion (reciprocity, social proof, urgency, loss-aversion). "
+        "Human tone — not spam."
     )
 
     def _build_prompt(self, title: str, payload: dict[str, Any]) -> str:
@@ -37,6 +81,10 @@ class SalesAgent(BaseAgent):
                 f"\nContext from {payload.get('from_agent', 'team')}:\n{payload['from_output']}"
             )
         for key, label in (
+            ("business_name", "Prospect business"),
+            ("contact_email", "Prospect email (REAL — use for outreach)"),
+            ("contact_phone", "Prospect phone"),
+            ("website", "Website"),
             ("name", "Lead name"),
             ("email", "Lead email"),
             ("company", "Company"),
@@ -45,27 +93,56 @@ class SalesAgent(BaseAgent):
         ):
             if payload.get(key):
                 lines.append(f"{label}: {payload[key]}")
+        if not payload.get("contact_email") and not payload.get("email"):
+            lines.append(
+                "\nNote: No email on file — draft message suitable for phone/WhatsApp instead."
+            )
         return "\n".join(lines)
 
     def actions(self, task: dict[str, Any], output: str) -> list[dict[str, Any]]:
-        """Agar lead ka real email ho to drafted outreach n8n se bhejo.
-
-        Discovery-pipeline (opportunity) me real customer email nahi hota,
-        isliye tab koi email nahi jaata — sirf playbook memory me save hota hai.
-        """
-        payload = task.get("payload", {}) or {}
-        email = payload.get("email")
-        if not email or payload.get("mode") == "opportunity_outreach":
+        """Real prospect email ho to n8n/Resend se outreach bhejo。"""
+        if not settings.outreach_auto_send or not settings.is_n8n_configured:
             return []
-        name = payload.get("name") or "there"
-        service = payload.get("service_slug")
-        subject = f"AitoTech — {name}" + (f" ({service})" if service else "")
+
+        payload = task.get("payload", {}) or {}
+        email = (
+            payload.get("contact_email")
+            or payload.get("prospect_email")
+            or payload.get("email")
+        )
+        if not email or "@" not in str(email):
+            # Phone-only fallback
+            phone = payload.get("contact_phone")
+            if phone:
+                subject, body = _parse_email_draft(output)
+                return [
+                    {
+                        "type": "whatsapp",
+                        "to": phone,
+                        "message": body[:1000],
+                        "prospect_id": payload.get("prospect_id"),
+                    }
+                ]
+            return []
+
+        business = payload.get("business_name") or payload.get("company") or "there"
+        subject, body = _parse_email_draft(output)
+
+        # Prospect status update
+        pid = payload.get("prospect_id")
+        if pid and settings.is_supabase_configured:
+            try:
+                db.update_prospect(pid, {"status": "outreach"})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("prospect status update fail: %s", exc)
+
         return [
             {
                 "type": "email",
                 "to": email,
                 "subject": subject,
-                "body": output,
-                "lead_id": payload.get("lead_id"),
+                "body": body,
+                "prospect_id": pid,
+                "business_name": business,
             }
         ]
